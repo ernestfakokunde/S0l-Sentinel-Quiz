@@ -2,8 +2,10 @@ import { SolanaProvider } from "@solana/react-hooks";
 import { PropsWithChildren } from "react";
 import { autoDiscover, createClient } from "@solana/client";
 
+const endpoint = import.meta.env.VITE_SOLANA_RPC_URL || "https://api.devnet.solana.com";
+
 const client = createClient({
-  endpoint: "https://api.devnet.solana.com",
+  endpoint,
   walletConnectors: autoDiscover(),
 });
 

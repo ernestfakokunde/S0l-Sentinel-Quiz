@@ -1,0 +1,157 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LobbyStatus {
+  waiting
+  playing
+  finished
+  cancelled
+}
+
+enum OnchainLobbyStatus {
+  open
+  locked
+  settled
+  cancelled
+}
+
+enum ClaimStatus {
+  unclaimed
+  claimed
+  expired
+}
+
+enum SettlementStatus {
+  pending
+  signed
+  claimed
+  failed
+  expired
+}
+
+model Match {
+  id                  String      @id @default(uuid())
+  matchId             String      @unique
+  matchpda            String?
+  lobbyId             String?
+  winner              String
+  prizeLamports       BigInt
+  treasuryFeeLamports BigInt      @default(0)
+  totalPotLamports    BigInt      @default(0)
+  players             Int
+  scores              Json?
+  resultPayload       Json?
+  resultHash          String?
+  resultSignature     String?
+  signerPublicKey     String?
+  signerKeyVersion    Int?
+  claimStatus         ClaimStatus @default(unclaimed)
+  claimTxSignature    String?
+  settlementTxsignature    String?
+  settlementStatus    SettlementStatus @default(pending)
+  resultNonce         String?
+  resultExpiresAt     DateTime?
+  claimedAt           DateTime?
+  finishedAt          DateTime
+  createdAt           DateTime    @default(now())
+
+  @@index([lobbyId])
+  @@index([winner])
+  @@index([claimStatus])
+}
+
+model LobbySnapshot {
+  id                 String      @id @default(uuid())
+  lobbyId            String      @unique
+  host               String
+  entryFeeLamports   BigInt
+  maxPlayers         Int
+  players            Int
+  playerWallets      Json?
+  questionCount      Int         @default(5)
+  questionTimeMs     Int         @default(15000)
+  topic              String?
+  privacy            String
+  status             LobbyStatus @default(waiting)
+  onchainLobbyPda    String?
+  escrowPda          String?
+  createdTxSignature String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  onchainStatus      OnchainLobbyStatus?
+  lobbyIdHash        String?
+}
+
+model PlayerJoin {
+  id               String   @id @default(uuid())
+  lobbyId          String
+  matchId          String?
+  player           String
+  depositPda       string?
+  refunded Boolean @default(false)
+  refundTxSignature String?
+  txSignature      String?
+  txVerified       Boolean  @default(false)
+  txSlot           BigInt?
+  txConfirmation   String?
+  entryFeeLamports BigInt?
+  joinedAt         DateTime @default(now())
+
+  @@unique([lobbyId, player])
+  @@index([matchId])
+  @@index([txSignature])
+}
+
+// Questions bank: each question has choices stored as JSON.
+model Question {
+  id         String   @id @default(uuid())
+  topic      String
+  text       String
+  choices    Json
+  answerIdx  Int
+  difficulty Int      @default(1)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([topic])
+  @@index([active])
+}
+
+// Snapshot of a question assigned to a match to ensure immutability.
+model MatchQuestion {
+  id         String @id @default(uuid())
+  matchId    String
+  questionId String
+  index      Int
+  snapshot   Json
+
+
+  @@unique([matchId, index])
+  @@index([matchId])
+  @@index([questionId])
+}
+
+// Stores individual player answers for auditing / analytics.
+model PlayerAnswer {
+  id             String   @id @default(uuid())
+  matchId        String
+  player         String
+  questionId     String
+  questionIndex  Int      @default(0)
+  answerIdx      Int
+  correct        Boolean
+  points         Int      @default(0)
+  responseTimeMs Int?
+  answeredAt     DateTime @default(now())
+
+  @@unique([matchId, player, questionIndex])
+  @@index([matchId, player])
+  @@index([questionId])
+}

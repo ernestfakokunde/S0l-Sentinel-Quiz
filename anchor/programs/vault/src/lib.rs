@@ -1,75 +1,37 @@
-use anchor_lang::prelude::*;
-use anchor_lang::system_program::{transfer, Transfer};
+        use anchor_lang::prelude::*;
+        use anchor_lang::system_program::{transfer, Transfer};
 
-#[cfg(test)]
-mod tests;
 
-declare_id!("Ah28Tt2zCqnMTcKjSwYvFayc7gB1Q98cNqsTHA2hE7wn");
+        declare_id!("Ah28Tt2zCqnMTcKjSwYvFayc7gB1Q98cNqsTHA2hE7wn");
+        use Crate::constant::*
+        #[program]
 
-#[program]
-pub mod vault {
-    use super::*;
+        pub mod SolQuiz {
+            use super::*;
+        }
 
-    pub fn deposit(ctx: Context<VaultAction>, amount: u64) -> Result<()> {
-        require!(ctx.accounts.vault.lamports() == 0, VaultError::VaultAlreadyExists);
+        #[account]
+        pub struct Lobby {
+        pub host:u8,
+            pub entry_fee: u64,
+            pub max_players: u8,
+            pub current_players: u8,
+            pub status: u8,
+            pub escrow_bump: u8,
+            pub lobby_bump: u8,
+        }
 
-        let rent = Rent::get()?.minimum_balance(0);
-        require!(amount > rent, VaultError::InvalidAmount);
+        #[derive(Accounts)] //Note this is the instruction context 
+        pub struct CreateLobby<info'> {
+        //This layer defines accounts that will be passed to this instruction
+        #[account(mut)]
+        pub host:Signer<info'>,
+        #[account(
+            init,  //automatically creates the account
+            payer = host, //the account that will pay for the creation of this account 
+            space = 8 + 1 + 8 + 1 + 1 + 1 + 1 + 1, //space needed to store the data in this account (8 bytes for discriminator and rest for the fields in the struct)
+            seeds = []
 
-        transfer(
-            CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.signer.to_account_info(),
-                    to: ctx.accounts.vault.to_account_info(),
-                },
-            ),
-            amount,
-        )?;
+        )]
 
-        Ok(())
-    }
 
-    pub fn withdraw(ctx: Context<VaultAction>) -> Result<()> {
-        require!(ctx.accounts.vault.lamports() > 0, VaultError::InvalidAmount);
-
-        let bump = ctx.bumps.vault;
-        let signer_key = ctx.accounts.signer.key();
-        let signer_seeds: &[&[&[u8]]] = &[&[b"vault", signer_key.as_ref(), &[bump]]];
-
-        transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.system_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.vault.to_account_info(),
-                    to: ctx.accounts.signer.to_account_info(),
-                },
-                signer_seeds,
-            ),
-            ctx.accounts.vault.lamports(),
-        )?;
-
-        Ok(())
-    }
-}
-
-#[derive(Accounts)]
-pub struct VaultAction<'info> {
-    #[account(mut)]
-    pub signer: Signer<'info>,
-    #[account(
-        mut,
-        seeds = [b"vault", signer.key().as_ref()],
-        bump,
-    )]
-    pub vault: SystemAccount<'info>,
-    pub system_program: Program<'info, System>,
-}
-
-#[error_code]
-pub enum VaultError {
-    #[msg("Vault already exists")]
-    VaultAlreadyExists,
-    #[msg("Invalid amount")]
-    InvalidAmount,
-}
