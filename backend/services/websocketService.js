@@ -52,6 +52,12 @@ async function handleMessage(ws, rawMessage) {
       break;
     }
 
+    case 'add_bot': {
+      const lobby = await gameEngine.addBotToLobby(data.lobbyId || ws.lobbyId, data.name);
+      send(ws, { type: 'bot_added', lobby });
+      break;
+    }
+
     case 'submit_answer': {
       const result = await gameEngine.submitAnswer({
         lobbyId: data.lobbyId || ws.lobbyId,

@@ -11,6 +11,7 @@ const DEFAULTS = {
   questionCount: 5,
   questionTimeMs: 15000,
   topic: 'Solana Basics',
+  mode: 'Speed',
   privacy: 'public',
 };
 
@@ -32,6 +33,7 @@ class GameEngine {
       questionCount: Number(input.questionCount || DEFAULTS.questionCount),
       questionTimeMs: Number(input.questionTimeMs || DEFAULTS.questionTimeMs),
       topic: input.topic || DEFAULTS.topic,
+      mode: input.mode || DEFAULTS.mode,
       privacy: input.privacy || DEFAULTS.privacy,
       status: 'waiting',
       players: [],
@@ -65,9 +67,10 @@ class GameEngine {
         players: lobby.players.length,
         playerWallets: lobby.players.map(({ player }) => player),
         questionCount: lobby.questionCount,
-        questionTimeMs: lobby.questionTimeMs,
-        topic: lobby.topic,
-        privacy: lobby.privacy,
+      questionTimeMs: lobby.questionTimeMs,
+      topic: lobby.topic,
+      mode: lobby.mode,
+      privacy: lobby.privacy,
         status: lobby.status,
         onchainLobbyPda: lobby.onchainLobbyPda,
         escrowPda: lobby.escrowPda,
@@ -202,6 +205,34 @@ class GameEngine {
       .catch((err) => console.warn('Lobby update failed:', err.message));
 
     if (ws) this.attachSocket(ws, lobbyId, player);
+
+    this.broadcast(lobbyId, { type: 'lobby_update', lobby: this.publicLobby(lobby) });
+
+    if (lobby.players.length >= lobby.maxPlayers) {
+      await this.startMatch(lobbyId);
+    }
+
+    return this.publicLobby(lobby);
+  }
+
+  async addBotToLobby(lobbyId, name = 'DemoRival') {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) throw new Error('Lobby not found');
+    if (lobby.status !== 'waiting') throw new Error('Lobby is not waiting for players');
+    if (lobby.players.length >= lobby.maxPlayers) throw new Error('Lobby is full');
+
+    const player = `bot:${name}:${crypto.randomUUID().slice(0, 6)}`;
+    lobby.players.push({
+      player,
+      txSignature: null,
+      txVerified: false,
+      joinedAt: new Date().toISOString(),
+      score: 0,
+      bot: true,
+    });
+
+    await this.persistLobbySnapshot(lobby)
+      .catch((err) => console.warn('Lobby bot update failed:', err.message));
 
     this.broadcast(lobbyId, { type: 'lobby_update', lobby: this.publicLobby(lobby) });
 
@@ -415,16 +446,18 @@ class GameEngine {
       questionCount: lobby.questionCount,
       questionTimeMs: lobby.questionTimeMs,
       topic: lobby.topic,
+      mode: lobby.mode,
       privacy: lobby.privacy,
       status: lobby.status,
       onchainLobbyPda: lobby.onchainLobbyPda,
       escrowPda: lobby.escrowPda,
-      players: lobby.players.map(({ player, joinedAt, txSignature, txVerified, score }) => ({
+      players: lobby.players.map(({ player, joinedAt, txSignature, txVerified, score, bot }) => ({
         player,
         joinedAt,
         txSignature,
         txVerified,
         score,
+        bot: Boolean(bot),
       })),
       createdAt: lobby.createdAt,
       matchId: lobby.matchId,

@@ -1,17 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useWalletConnection } from "@solana/react-hooks";
+import { shortAddress, solToLamports } from "./utils";
 
-type Privacy = "public" | "private";
+type AppRoute = "/" | "/dashboard" | "/matchmake" | "/lobby" | "/game" | "/leaderboard" | "/history" | "/profile" | "/admin";
 type LobbyStatus = "waiting" | "playing" | "finished" | "cancelled";
-type ConnectionState = "offline" | "connecting" | "online";
-type RoutePath = "/" | "/matchmake" | "/lobby" | "/game" | "/settlement" | "/history";
+type GameMode = "Speed" | "Classic" | "Survival";
+
+type Profile = {
+  wallet: string;
+  username: string;
+  avatar: string;
+  bio: string;
+  favoriteTopic: string;
+};
 
 type LobbyPlayer = {
   player: string;
   joinedAt?: string;
-  txSignature?: string | null;
-  txVerified?: boolean;
   score?: number;
+  bot?: boolean;
 };
 
 type Lobby = {
@@ -22,13 +29,12 @@ type Lobby = {
   questionCount: number;
   questionTimeMs: number;
   topic: string;
-  privacy: Privacy;
+  mode?: GameMode;
+  privacy: "public" | "private";
   status: LobbyStatus;
   players: LobbyPlayer[];
   createdAt: string;
   matchId?: string | null;
-  onchainLobbyPda?: string | null;
-  escrowPda?: string | null;
 };
 
 type QuestionEvent = {
@@ -43,47 +49,6 @@ type QuestionEvent = {
 type Score = {
   player: string;
   score: number;
-};
-
-type SignedResult = {
-  algorithm: string;
-  canonical: string;
-  messageBase64: string;
-  signatureBase64: string;
-  publicKeyBase64: string;
-  resultHash: string;
-  ephemeralSigner: boolean;
-};
-
-type MatchEnded = {
-  type: "match_ended";
-  matchId: string;
-  lobbyId: string;
-  winner: string;
-  payoutLamports: string;
-  treasuryFeeLamports: string;
-  totalPotLamports: string;
-  scores: Score[];
-  signedResult: SignedResult;
-};
-
-type HistoryMatch = {
-  matchId: string;
-  lobbyId?: string;
-  winner: string;
-  prizeLamports: string;
-  totalPotLamports?: string;
-  treasuryFeeLamports?: string;
-  players: number;
-  claimStatus?: string;
-  finishedAt: string;
-};
-
-type RpcInfo = {
-  cluster: string;
-  rpcUrl: string;
-  commitment: string;
-  joinTxVerificationRequired: boolean;
 };
 
 type ServerMessage = {
@@ -102,180 +67,177 @@ type ServerMessage = {
   points?: number;
   message?: string;
   winner?: string;
-  payoutLamports?: string;
-  treasuryFeeLamports?: string;
-  totalPotLamports?: string;
-  signedResult?: SignedResult;
-  lobbyId?: string;
+};
+
+type NavItem = {
+  label: string;
+  route: AppRoute;
+  icon: string;
+};
+
+type WalletSession = {
+  route?: AppRoute;
+  selectedTopic?: string;
+  selectedMode?: GameMode;
+  entryFee?: string;
+  activeLobbyId?: string;
+  updatedAt?: string;
 };
 
 const API_URL = import.meta.env.VITE_BACKEND_HTTP_URL || "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_BACKEND_WS_URL || "ws://localhost:4000";
-const SOLANA_CLUSTER = import.meta.env.VITE_SOLANA_CLUSTER || "devnet";
 
-function lamportsToSol(lamports?: string | number | null) {
-  if (lamports === undefined || lamports === null) return "0";
-  const value = Number(lamports);
-  if (!Number.isFinite(value)) return "0";
-  return (value / 1_000_000_000).toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
-  });
-}
+const topics = ["Solana Ecosystem", "Crypto History", "DeFi Fundamentals", "NFT Markets", "Web3 Development", "Blockchain Tech", "Trading & Markets", "Bitcoin", "Ethereum"];
+const avatars = ["👨‍🚀", "👸", "🧑", "🧑‍🦰", "🧔", "👩", "🧑‍🎤", "🧑‍💻"];
 
-function solToLamports(sol: string) {
-  const parsed = Number.parseFloat(sol);
-  if (!Number.isFinite(parsed) || parsed <= 0) return "0";
-  return Math.round(parsed * 1_000_000_000).toString();
-}
+const navItems: NavItem[] = [
+  { label: "Dashboard", route: "/dashboard", icon: "▦" },
+  { label: "Matchmaking", route: "/matchmake", icon: "⚔" },
+  { label: "Find Lobbies", route: "/lobby", icon: "⌕" },
+  { label: "Leaderboard", route: "/leaderboard", icon: "♕" },
+  { label: "Match History", route: "/history", icon: "↺" },
+  { label: "Profile", route: "/profile", icon: "♙" },
+  { label: "Admin Panel", route: "/admin", icon: "♢" },
+];
 
-function shortAddress(value?: string | null) {
-  if (!value) return "Not connected";
-  if (value.length <= 12) return value;
-  return `${value.slice(0, 5)}...${value.slice(-4)}`;
-}
+const normalizeRoute = (pathname: string): AppRoute => {
+  if (pathname === "/") return "/";
+  if (pathname === "/find-match") return "/lobby";
+  if (["/dashboard", "/matchmake", "/lobby", "/game", "/leaderboard", "/history", "/profile", "/admin"].includes(pathname)) {
+    return pathname as AppRoute;
+  }
+  return "/dashboard";
+};
 
-function formatDate(value?: string) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
+const lamportsToSol = (lamports?: string) => {
+  const value = Number(lamports || "0") / 1_000_000_000;
+  return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+};
 
-function safeJson<T>(value: string): T | null {
+const defaultProfile = (wallet?: string): Profile => ({
+  wallet: wallet || "",
+  username: wallet ? shortAddress(wallet) : "QuizChamp",
+  avatar: "👨‍🚀",
+  bio: "Sol Quiz Arena competitor",
+  favoriteTopic: "Solana Ecosystem",
+});
+
+const walletSessionKey = (walletAddress: string) => `sol-quiz-arena:${walletAddress}:session`;
+
+const readWalletSession = (walletAddress?: string): WalletSession => {
+  if (!walletAddress) return {};
   try {
-    return JSON.parse(value) as T;
+    return JSON.parse(window.localStorage.getItem(walletSessionKey(walletAddress)) || "{}") as WalletSession;
   } catch {
-    return null;
+    return {};
   }
-}
+};
 
-function normalizePath(pathname: string): RoutePath {
-  if (["/matchmake", "/lobby", "/game", "/settlement", "/history"].includes(pathname)) {
-    return pathname as RoutePath;
-  }
-  return "/";
-}
+const writeWalletSession = (walletAddress: string | undefined, patch: WalletSession) => {
+  if (!walletAddress) return;
+  const current = readWalletSession(walletAddress);
+  window.localStorage.setItem(walletSessionKey(walletAddress), JSON.stringify({ ...current, ...patch, updatedAt: new Date().toISOString() }));
+};
 
 export default function App() {
   const { connectors, connect, disconnect, wallet, status } = useWalletConnection();
   const socketRef = useRef<WebSocket | null>(null);
-
-  const [socketState, setSocketState] = useState<ConnectionState>("offline");
-  const [notice, setNotice] = useState("Ready to connect the arena.");
+  const [route, setRoute] = useState<AppRoute>(() => normalizeRoute(window.location.pathname));
+  const [socketState, setSocketState] = useState<"offline" | "connecting" | "online">("offline");
+  const [notice, setNotice] = useState("Connect your wallet to enter the arena.");
+  const [profile, setProfile] = useState<Profile>(() => defaultProfile());
   const [lobbies, setLobbies] = useState<Lobby[]>([]);
-  const [history, setHistory] = useState<HistoryMatch[]>([]);
-  const [rpcInfo, setRpcInfo] = useState<RpcInfo | null>(null);
-
-  const [entryFeeSol, setEntryFeeSol] = useState("0.1");
-  const [maxPlayers, setMaxPlayers] = useState(2);
-  const [questionCount, setQuestionCount] = useState(5);
-  const [questionTimeMs, setQuestionTimeMs] = useState(15000);
-  const [topic, setTopic] = useState("Solana Basics");
-  const [privacy, setPrivacy] = useState<Privacy>("public");
-  const [txSignature, setTxSignature] = useState("");
-  const [claimTxSignature, setClaimTxSignature] = useState("");
-
-  const [route, setRoute] = useState<RoutePath>(() => normalizePath(window.location.pathname));
   const [activeLobby, setActiveLobby] = useState<Lobby | null>(null);
   const [activeQuestion, setActiveQuestion] = useState<QuestionEvent | null>(null);
   const [scores, setScores] = useState<Score[]>([]);
   const [lastAnswer, setLastAnswer] = useState<{ correct: boolean; points: number } | null>(null);
-  const [matchEnded, setMatchEnded] = useState<MatchEnded | null>(null);
+  const [matchWinner, setMatchWinner] = useState("");
+  const [entryFee, setEntryFee] = useState("0.5");
+  const [selectedTopic, setSelectedTopic] = useState("Solana Ecosystem");
+  const [selectedMode, setSelectedMode] = useState<GameMode>("Speed");
   const [now, setNow] = useState(Date.now());
 
   const address = wallet?.account.address.toString();
   const isWalletConnected = status === "connected" && Boolean(address);
-  const entryFeeLamports = useMemo(() => solToLamports(entryFeeSol), [entryFeeSol]);
-
-  const remainingMs = useMemo(() => {
-    if (!activeQuestion) return 0;
-    return Math.max(0, activeQuestion.startedAt + activeQuestion.timeLimitMs - now);
-  }, [activeQuestion, now]);
-
-  const timerPct = activeQuestion
-    ? Math.max(0, Math.min(100, (remainingMs / activeQuestion.timeLimitMs) * 100))
-    : 0;
+  const remainingMs = activeQuestion ? Math.max(0, activeQuestion.startedAt + activeQuestion.timeLimitMs - now) : 0;
+  const timerPct = activeQuestion ? Math.max(0, Math.min(100, (remainingMs / activeQuestion.timeLimitMs) * 100)) : 0;
+  const playerScore = scores.find((score) => score.player === address)?.score || 0;
 
   async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API_URL}${path}`, {
       ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers || {}),
-      },
+      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     });
-
     const payload = (await response.json().catch(() => ({}))) as T & { error?: string };
     if (!response.ok) throw new Error(payload.error || `Request failed: ${path}`);
     return payload;
   }
 
-  async function refreshDashboard() {
-    const [lobbyPayload, historyPayload, solanaPayload] = await Promise.allSettled([
-      apiFetch<{ lobbies: Lobby[] }>("/lobbies"),
-      apiFetch<{ matches: HistoryMatch[] }>("/history"),
-      apiFetch<{ solana: RpcInfo }>("/solana/rpc"),
-    ]);
-
-    if (lobbyPayload.status === "fulfilled") setLobbies(lobbyPayload.value.lobbies);
-    if (historyPayload.status === "fulfilled") setHistory(historyPayload.value.matches);
-    if (solanaPayload.status === "fulfilled") setRpcInfo(solanaPayload.value.solana);
-  }
-
-  function navigate(nextRoute: RoutePath) {
-    if (window.location.pathname !== nextRoute) {
-      window.history.pushState({}, "", nextRoute);
-    }
+  const navigate = (nextRoute: AppRoute) => {
     setRoute(nextRoute);
-  }
+    window.history.pushState({}, "", nextRoute);
+    if (nextRoute !== "/") writeWalletSession(address, { route: nextRoute });
+  };
 
-  function sendSocket(payload: Record<string, unknown>) {
+  const connectPrimaryWallet = () => {
+    if (isWalletConnected) return navigate("/dashboard");
+    const connector = connectors[0];
+    if (!connector) {
+      setNotice("No wallet connector detected. Install a Solana wallet and refresh.");
+      return;
+    }
+    void connect(connector.id);
+  };
+
+  const refreshLobbies = async () => {
+    try {
+      const payload = await apiFetch<{ lobbies: Lobby[] }>("/lobbies");
+      setLobbies(payload.lobbies);
+    } catch (err) {
+      setNotice((err as Error).message);
+    }
+  };
+
+  const sendSocket = (payload: Record<string, unknown>) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setNotice("Realtime socket is not connected yet.");
+      setNotice("Realtime server is not connected yet.");
       return false;
     }
     socket.send(JSON.stringify(payload));
     return true;
-  }
+  };
 
-  function handleServerMessage(data: ServerMessage) {
+  const syncLobby = (lobby: Lobby) => {
+    setActiveLobby(lobby);
+    setLobbies((current) => [lobby, ...current.filter((item) => item.lobbyId !== lobby.lobbyId)]);
+    writeWalletSession(address, { activeLobbyId: lobby.lobbyId, route: "/game" });
+  };
+
+  const handleServerMessage = (data: ServerMessage) => {
     if (data.type === "welcome") {
-      setNotice("Realtime arena connected.");
+      setSocketState("online");
       return;
     }
-
     if (data.type === "error") {
-      setNotice(data.message || "Server returned an error.");
+      setNotice(data.message || "Realtime error.");
       return;
     }
-
-    if (["lobby_created", "joined", "matchmaking_joined", "lobby_update", "start_ack"].includes(data.type)) {
-      if (data.lobby) {
-        setActiveLobby(data.lobby);
-        setLobbies((prev) => {
-          const next = prev.filter((lobby) => lobby.lobbyId !== data.lobby?.lobbyId);
-          return [data.lobby, ...next].filter(Boolean) as Lobby[];
-        });
-      }
-      setNotice(data.type === "matchmaking_joined" ? "Joined matchmaking lobby." : "Lobby updated.");
+    if (["lobby_created", "joined", "matchmaking_joined", "lobby_update", "bot_added", "start_ack"].includes(data.type)) {
+      if (data.lobby) syncLobby(data.lobby);
+      if (["lobby_created", "joined", "matchmaking_joined"].includes(data.type)) navigate("/game");
+      setNotice(data.type === "bot_added" ? "Demo rival joined. Match is starting." : "Lobby synced.");
       return;
     }
-
     if (data.type === "match_started") {
-      if (data.lobby) setActiveLobby(data.lobby);
+      if (data.lobby) syncLobby(data.lobby);
       setScores((data.players || []).map((player) => ({ player, score: 0 })));
-      setMatchEnded(null);
-      setLastAnswer(null);
+      setActiveQuestion(null);
+      setMatchWinner("");
       navigate("/game");
       setNotice(`Match started with ${data.questionCount || 0} questions.`);
       return;
     }
-
     if (data.type === "question") {
       setActiveQuestion({
         matchId: data.matchId || "",
@@ -287,122 +249,68 @@ export default function App() {
       });
       setLastAnswer(null);
       navigate("/game");
-      setNotice("New question live.");
       return;
     }
-
     if (data.type === "answer_ack") {
       setLastAnswer({ correct: Boolean(data.correct), points: Number(data.points || 0) });
+      if (data.scores) setScores(data.scores);
       return;
     }
-
     if (data.type === "score_update") {
       setScores(data.scores || []);
       return;
     }
-
-    if (data.type === "match_ended" && data.signedResult) {
-      const ended: MatchEnded = {
-        type: "match_ended",
-        matchId: data.matchId || "",
-        lobbyId: data.lobbyId || activeLobby?.lobbyId || "",
-        winner: data.winner || "",
-        payoutLamports: data.payoutLamports || "0",
-        treasuryFeeLamports: data.treasuryFeeLamports || "0",
-        totalPotLamports: data.totalPotLamports || "0",
-        scores: data.scores || [],
-        signedResult: data.signedResult,
-      };
-      setMatchEnded(ended);
+    if (data.type === "match_ended") {
+      setMatchWinner(data.winner || "");
       setActiveQuestion(null);
-      setScores(ended.scores);
-      navigate("/settlement");
-      setNotice("Match ended. Winner can claim with the signed result.");
-      void refreshDashboard();
+      if (data.scores) setScores(data.scores);
+      setNotice("Match complete. Results are synced.");
+      void refreshLobbies();
     }
-  }
+  };
 
-  useEffect(() => {
-    setSocketState("connecting");
-    const socket = new WebSocket(WS_URL);
-    socketRef.current = socket;
-
-    socket.addEventListener("open", () => setSocketState("online"));
-    socket.addEventListener("close", () => setSocketState("offline"));
-    socket.addEventListener("error", () => {
-      setSocketState("offline");
-      setNotice("Realtime socket error. Check that the backend is running.");
+  const createLobby = () => {
+    if (!address) return setNotice("Connect a wallet before creating a lobby.");
+    sendSocket({
+      type: "create_lobby",
+      host: address,
+      player: address,
+      entryFeeLamports: solToLamports(entryFee),
+      maxPlayers: 2,
+      questionCount: 5,
+      questionTimeMs: selectedMode === "Speed" ? 12000 : 18000,
+      topic: selectedTopic,
+      mode: selectedMode,
+      privacy: "public",
     });
-    socket.addEventListener("message", (event) => {
-      const payload = safeJson<ServerMessage>(event.data);
-      if (payload) handleServerMessage(payload);
-    });
+  };
 
-    return () => socket.close();
-  }, []);
-
-  useEffect(() => {
-    const handlePopState = () => setRoute(normalizePath(window.location.pathname));
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
-
-  useEffect(() => {
-    void refreshDashboard().catch((err: Error) => setNotice(err.message));
-    const interval = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(interval);
-  }, []);
-
-  async function createLobby() {
-    if (!address) return setNotice("Connect a wallet first.");
-
-    try {
-      const payload = await apiFetch<{ lobby: Lobby }>("/lobbies", {
-        method: "POST",
-        body: JSON.stringify({
-          host: address,
-          entryFeeLamports,
-          maxPlayers,
-          questionCount,
-          questionTimeMs,
-          topic,
-          privacy,
-        }),
-      });
-
-      setActiveLobby(payload.lobby);
-      navigate("/lobby");
-      setLobbies((prev) => [payload.lobby, ...prev.filter((lobby) => lobby.lobbyId !== payload.lobby.lobbyId)]);
-      sendSocket({ type: "join_lobby", lobbyId: payload.lobby.lobbyId, player: address, txSignature: txSignature || undefined });
-      setNotice("Lobby created. Waiting for players.");
-    } catch (err) {
-      setNotice((err as Error).message);
-    }
-  }
-
-  function findMatch() {
-    if (!address) return setNotice("Connect a wallet first.");
-    navigate("/game");
+  const quickMatch = () => {
+    if (!address) return setNotice("Connect a wallet before matchmaking.");
     sendSocket({
       type: "find_match",
       player: address,
-      entryFeeLamports,
-      maxPlayers,
-      questionCount,
-      questionTimeMs,
-      topic,
+      entryFeeLamports: solToLamports(entryFee),
+      maxPlayers: 2,
+      questionCount: 5,
+      questionTimeMs: selectedMode === "Speed" ? 12000 : 18000,
+      topic: selectedTopic,
+      mode: selectedMode,
       privacy: "public",
-      txSignature: txSignature || undefined,
     });
-  }
+  };
 
-  function joinLobby(lobbyId: string) {
-    if (!address) return setNotice("Connect a wallet first.");
-    navigate("/game");
-    sendSocket({ type: "join_lobby", lobbyId, player: address, txSignature: txSignature || undefined });
-  }
+  const joinLobby = (lobbyId: string) => {
+    if (!address) return setNotice("Connect a wallet before joining a lobby.");
+    sendSocket({ type: "join_lobby", lobbyId, player: address });
+  };
 
-  function submitAnswer(answerIdx: number) {
+  const addDemoRival = () => {
+    if (!activeLobby) return;
+    sendSocket({ type: "add_bot", lobbyId: activeLobby.lobbyId, name: "QuizBot" });
+  };
+
+  const submitAnswer = (answerIdx: number) => {
     if (!address || !activeLobby || !activeQuestion) return;
     sendSocket({
       type: "submit_answer",
@@ -411,272 +319,428 @@ export default function App() {
       questionIndex: activeQuestion.index,
       answerIdx,
     });
-  }
+  };
 
-  async function recordClaim() {
-    if (!matchEnded) return;
-    if (!claimTxSignature.trim()) return setNotice("Paste the claim transaction signature first.");
+  const saveProfile = async (nextProfile: Profile) => {
+    if (!address) return setNotice("Connect a wallet before saving a profile.");
+    const payload = await apiFetch<{ profile: Profile }>(`/profiles/${address}`, {
+      method: "PUT",
+      body: JSON.stringify(nextProfile),
+    });
+    setProfile(payload.profile);
+    writeWalletSession(address, { selectedTopic: payload.profile.favoriteTopic });
+    setNotice("Profile saved and synced.");
+  };
 
-    try {
-      await apiFetch(`/matches/${matchEnded.matchId}/claim`, {
-        method: "POST",
-        body: JSON.stringify({ claimTxSignature: claimTxSignature.trim() }),
-      });
-      setNotice("Claim transaction verified and recorded.");
-      setClaimTxSignature("");
-      await refreshDashboard();
-    } catch (err) {
-      setNotice((err as Error).message);
+  useEffect(() => {
+    const socket = new WebSocket(WS_URL);
+    socketRef.current = socket;
+    setSocketState("connecting");
+    socket.addEventListener("open", () => setSocketState("online"));
+    socket.addEventListener("close", () => setSocketState("offline"));
+    socket.addEventListener("error", () => {
+      setSocketState("offline");
+      setNotice("Realtime socket error. Make sure the backend is running.");
+    });
+    socket.addEventListener("message", (event) => handleServerMessage(JSON.parse(event.data)));
+    return () => socket.close();
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => setRoute(normalizeRoute(window.location.pathname));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    void refreshLobbies();
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    writeWalletSession(address, { entryFee, selectedMode, selectedTopic });
+  }, [address, entryFee, selectedMode, selectedTopic]);
+
+  useEffect(() => {
+    if (!address) {
+      setProfile(defaultProfile());
+      return;
     }
-  }
+    const session = readWalletSession(address);
+    if (session.entryFee) setEntryFee(session.entryFee);
+    if (session.selectedMode) setSelectedMode(session.selectedMode);
+    if (session.selectedTopic) setSelectedTopic(session.selectedTopic);
 
-  const playerRank = scores.findIndex((score) => score.player === address) + 1;
+    void apiFetch<{ profile: Profile }>(`/profiles/${address}`)
+      .then((payload) => {
+        setProfile(payload.profile);
+        setSelectedTopic(session.selectedTopic || payload.profile.favoriteTopic || "Solana Ecosystem");
+      })
+      .catch(() => setProfile(defaultProfile(address)));
 
-  const walletControls = (
-    <div className="wallet-panel">
-      <div>
-        <span className={`status-dot ${isWalletConnected ? "good" : "idle"}`} />
-        <span>{isWalletConnected ? shortAddress(address) : "Wallet required"}</span>
-      </div>
-      <select
-        disabled={status === "connecting" || isWalletConnected}
-        onChange={(event) => event.target.value && connect(event.target.value)}
-        value=""
-      >
-        <option value="">{status === "connecting" ? "Connecting..." : "Connect wallet"}</option>
-        {connectors.map((connector) => (
-          <option key={connector.id} value={connector.id}>{connector.name}</option>
-        ))}
-      </select>
-      <button type="button" onClick={() => disconnect()} disabled={!isWalletConnected}>Disconnect</button>
-    </div>
-  );
+    const resumeRoute = session.route && session.route !== "/" ? session.route : "/dashboard";
+    setRoute(resumeRoute);
+    window.history.replaceState({}, "", resumeRoute);
 
-  const appNav = (
-    <nav className="app-nav" aria-label="Sentinel Quiz pages">
-      <button type="button" className={route === "/" ? "active" : ""} onClick={() => navigate("/")}>Home</button>
-      <button type="button" className={route === "/matchmake" ? "active" : ""} onClick={() => navigate("/matchmake")}>Matchmake</button>
-      <button type="button" className={route === "/lobby" ? "active" : ""} onClick={() => navigate("/lobby")}>Lobby</button>
-      <button type="button" className={route === "/game" ? "active" : ""} onClick={() => navigate("/game")}>Game</button>
-      <button type="button" className={route === "/settlement" ? "active" : ""} onClick={() => navigate("/settlement")}>Claim</button>
-      <button type="button" className={route === "/history" ? "active" : ""} onClick={() => navigate("/history")}>History</button>
-    </nav>
-  );
+    if (session.activeLobbyId) {
+      void apiFetch<{ lobby: Lobby }>(`/lobbies/${session.activeLobbyId}`)
+        .then((payload) => {
+          const isPlayer = payload.lobby.players.some((player) => player.player === address);
+          if (isPlayer && payload.lobby.status !== "finished") {
+            setActiveLobby(payload.lobby);
+            if (resumeRoute === "/game") setNotice("Resumed your last lobby from this wallet.");
+          }
+        })
+        .catch(() => writeWalletSession(address, { activeLobbyId: undefined }));
+    }
+  }, [address]);
 
   if (route === "/") {
+    return <LandingPage connectPrimaryWallet={connectPrimaryWallet} isWalletConnected={isWalletConnected} navigate={navigate} />;
+  }
+
+  return (
+    <ArenaShell
+      address={address}
+      connectors={connectors}
+      connect={connect}
+      disconnect={disconnect}
+      isWalletConnected={isWalletConnected}
+      navigate={navigate}
+      notice={notice}
+      profile={profile}
+      route={route}
+      socketState={socketState}
+      status={status}
+    >
+      {route === "/matchmake" ? (
+        <MatchmakingPage
+          createLobby={createLobby}
+          entryFee={entryFee}
+          quickMatch={quickMatch}
+          selectedMode={selectedMode}
+          selectedTopic={selectedTopic}
+          setEntryFee={setEntryFee}
+          setSelectedMode={setSelectedMode}
+          setSelectedTopic={setSelectedTopic}
+        />
+      ) : route === "/lobby" ? (
+        <LobbiesPage joinLobby={joinLobby} lobbies={lobbies} refreshLobbies={refreshLobbies} />
+      ) : route === "/game" ? (
+        <GamePage
+          activeLobby={activeLobby}
+          activeQuestion={activeQuestion}
+          addDemoRival={addDemoRival}
+          address={address}
+          lastAnswer={lastAnswer}
+          matchWinner={matchWinner}
+          playerScore={playerScore}
+          remainingMs={remainingMs}
+          scores={scores}
+          submitAnswer={submitAnswer}
+          timerPct={timerPct}
+        />
+      ) : route === "/profile" ? (
+        <ProfilePage address={address} profile={profile} saveProfile={saveProfile} />
+      ) : (
+        <DashboardPage lobbies={lobbies} navigate={navigate} profile={profile} />
+      )}
+    </ArenaShell>
+  );
+}
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="brand">
+      <div className="brand-mark">ϟ</div>
+      <div>
+        <div className="brand-title">SOL QUIZ</div>
+        <div className={compact ? "brand-sub compact" : "brand-sub"}>ARENA</div>
+      </div>
+    </div>
+  );
+}
+
+function LandingPage({ connectPrimaryWallet, isWalletConnected, navigate }: { connectPrimaryWallet: () => void; isWalletConnected: boolean; navigate: (route: AppRoute) => void }) {
+  return (
+    <main className="landing">
+      <header className="landing-nav">
+        <Brand compact />
+        <nav><a>How It Works</a><a>Leaderboard</a><a>Tournaments</a><a>Docs</a></nav>
+        <button className="gradient-button" onClick={connectPrimaryWallet}><span>ϟ</span>{isWalletConnected ? "Enter Arena" : "Connect Wallet"}</button>
+      </header>
+      <section className="hero-grid">
+        <div className="target target-a" /><div className="target target-b" /><div className="target target-c" /><div className="target target-d" />
+        <div className="hero-content">
+          <div className="live-pill landing-pill"><span />2,848 PLAYERS COMPETING NOW</div>
+          <h1>PLAY QUIZ.<strong>EARN SOL.</strong></h1>
+          <p>The first competitive play-to-earn quiz arena on Solana. Answer faster. Win bigger. Earn real SOL every match.</p>
+          <div className="prize-panel">
+            <div className="prize-block"><span className="trophy">♕</span><div><small>TOTAL PRIZE POOL</small><strong>142847.43 SOL</strong></div></div>
+            <div className="divider" />
+            <div><small>TODAY'S MATCHES</small><strong>9,284</strong></div>
+          </div>
+          <div className="hero-actions">
+            <button className="gradient-button big" onClick={() => navigate("/matchmake")}><span>▷</span> START PLAYING <span>›</span></button>
+            <button className="outline-button big" onClick={() => navigate("/lobby")}>VIEW LIVE LOBBIES</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function ArenaShell({
+  address,
+  children,
+  connectors,
+  connect,
+  disconnect,
+  isWalletConnected,
+  navigate,
+  notice,
+  profile,
+  route,
+  socketState,
+  status,
+}: {
+  address?: string;
+  children: ReactNode;
+  connectors: readonly { id: string; name: string }[];
+  connect: (connectorId: string) => unknown;
+  disconnect: () => unknown;
+  isWalletConnected: boolean;
+  navigate: (route: AppRoute) => void;
+  notice: string;
+  profile: Profile;
+  route: AppRoute;
+  socketState: string;
+  status: string;
+}) {
+  return (
+    <main className="arena">
+      <aside className="sidebar">
+        <div className="sidebar-top">
+          <Brand />
+          <button className="wallet-card" onClick={() => navigate("/profile")}>
+            <span>▣</span><div><small>{isWalletConnected ? "CONNECTED" : "PROFILE"}</small><strong>{isWalletConnected ? shortAddress(address) : "No wallet"}</strong></div><b>{profile.avatar}</b>
+          </button>
+          <nav className="side-nav">
+            {navItems.map((item) => (
+              <button key={item.route} className={route === item.route ? "active" : ""} onClick={() => navigate(item.route)}>
+                <span>{item.icon}</span>{item.label}{route === item.route ? <em>›</em> : null}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="sidebar-bottom">
+          <button onClick={() => navigate("/profile")}><span>⚙</span> Profile Setup</button>
+          <button className="danger" onClick={() => void disconnect()} disabled={!isWalletConnected}><span>↪</span> Disconnect</button>
+        </div>
+      </aside>
+      <section className="arena-main">
+        <header className="topbar">
+          <div className="live-pill"><i>⌁</i> {socketState.toUpperCase()} • 2,847 PLAYERS</div>
+          <div className="top-actions">
+            <div className="wallet-select">
+              <span className={isWalletConnected ? "connected" : ""} />
+              <select disabled={status === "connecting" || isWalletConnected} onChange={(event) => event.target.value && void connect(event.target.value)} value="">
+                <option value="">{isWalletConnected ? shortAddress(address) : status === "connecting" ? "Connecting..." : "Connect wallet"}</option>
+                {connectors.map((connector) => <option key={connector.id} value={connector.id}>{connector.name}</option>)}
+              </select>
+            </div>
+            <div className="pool-pill">♕ Pool: 486 SOL</div>
+            <button className="avatar" onClick={() => navigate("/profile")}>{profile.avatar}</button>
+          </div>
+        </header>
+        {children}
+        <div className="notice">{notice}</div>
+      </section>
+    </main>
+  );
+}
+
+function DashboardPage({ lobbies, navigate, profile }: { lobbies: Lobby[]; navigate: (route: AppRoute) => void; profile: Profile }) {
+  const openLobbies = lobbies.filter((lobby) => lobby.status === "waiting").length;
+  const metrics = [
+    { icon: "⌁", label: "SOL Balance", value: "12.48", detail: "+6.3 today", tone: "green" },
+    { icon: "♕", label: "Open Lobbies", value: String(openLobbies), detail: "Backend synced", tone: "purple" },
+    { icon: "↗", label: "Favorite Topic", value: profile.favoriteTopic.split(" ")[0], detail: profile.favoriteTopic, tone: "cyan" },
+    { icon: "ϟ", label: "Win Streak", value: "14", detail: "Personal best: 22", tone: "gold" },
+  ];
+  const leaders = [
+    { rank: "🥇", avatar: "👸", name: "CryptoKing_Sol", score: "847.2", delta: "+12.4" },
+    { rank: "🥈", avatar: "🧑", name: "SolMaster99", score: "623.8", delta: "+8.1" },
+    { rank: "🥉", avatar: "🧑‍🦰", name: "QuizWhale", score: "518.4", delta: "+5.7" },
+  ];
+
+  return (
+    <div className="content dashboard">
+      <section className="welcome">
+        <div><h2>Welcome back, <span>{profile.username}</span></h2><p>Rank #47 globally • profile synced to wallet</p></div>
+        <div className="welcome-actions"><button className="gradient-button" onClick={() => navigate("/matchmake")}>▷ QUICK PLAY</button><button className="outline-button" onClick={() => navigate("/lobby")}>FIND LOBBIES</button></div>
+      </section>
+      <section className="metric-grid">
+        {metrics.map((metric) => <article className={`metric-card ${metric.tone}`} key={metric.label}><div className="metric-icon">{metric.icon}</div><div className="metric-value">{metric.value}</div><p>{metric.detail}</p><span>{metric.label}</span></article>)}
+      </section>
+      <section className="dashboard-panels">
+        <article className="chart-panel">
+          <div><h3>WEEKLY EARNINGS</h3><p>+31.4 SOL this week</p></div><span className="chart-badge">↗ +42%</span>
+          <svg viewBox="0 0 760 280" role="img" aria-label="Weekly earnings line chart"><defs><linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#963cff" stopOpacity="0.35" /><stop offset="100%" stopColor="#963cff" stopOpacity="0" /></linearGradient></defs><path d="M6 224 C92 174 122 164 198 188 C288 216 278 218 360 164 C428 120 514 182 584 126 C650 72 672 88 754 104 L754 270 L6 270 Z" fill="url(#chartFill)" /><path d="M6 224 C92 174 122 164 198 188 C288 216 278 218 360 164 C428 120 514 182 584 126 C650 72 672 88 754 104" fill="none" stroke="#973dff" strokeWidth="4" /></svg>
+        </article>
+        <article className="leader-panel">
+          <div className="panel-head"><h3>LEADERBOARD</h3><a>View all</a></div>
+          {leaders.map((leader) => <div className="leader-row" key={leader.name}><span>{leader.rank}</span><b>{leader.avatar}</b><strong>{leader.name}</strong><em>{leader.score}<small>{leader.delta}</small></em></div>)}
+          <div className="leader-row self"><span>#47</span><b>{profile.avatar}</b><strong>You</strong><em>84.7<small>+6.3</small></em></div>
+        </article>
+      </section>
+      <section className="bottom-tabs"><b>Recent Matches</b><span>Daily Quests</span></section>
+    </div>
+  );
+}
+
+function MatchmakingPage({
+  createLobby,
+  entryFee,
+  quickMatch,
+  selectedMode,
+  selectedTopic,
+  setEntryFee,
+  setSelectedMode,
+  setSelectedTopic,
+}: {
+  createLobby: () => void;
+  entryFee: string;
+  quickMatch: () => void;
+  selectedMode: GameMode;
+  selectedTopic: string;
+  setEntryFee: (value: string) => void;
+  setSelectedMode: (value: GameMode) => void;
+  setSelectedTopic: (value: string) => void;
+}) {
+  const fees = ["0.1", "0.25", "0.5", "1", "2.5", "5"];
+  const modes: { mode: GameMode; icon: string; copy: string }[] = [
+    { mode: "Speed", icon: "ϟ", copy: "Fastest answer wins" },
+    { mode: "Classic", icon: "♕", copy: "Most correct wins" },
+    { mode: "Survival", icon: "☊", copy: "Eliminate on wrong" },
+  ];
+
+  return (
+    <div className="content narrow">
+      <section className="page-title"><h2>MATCHMAKING</h2><p>Find or create a competitive quiz match</p></section>
+      <div className="segmented"><button className="active" onClick={quickMatch}>ϟ QUICK MATCH</button><button onClick={createLobby}>＋ CREATE LOBBY</button></div>
+      <section className="config-panel"><label>GAME MODE</label><div className="mode-grid">{modes.map((item) => <button className={`mode ${selectedMode === item.mode ? "active" : ""} ${item.mode === "Survival" ? "danger-mode" : ""}`} key={item.mode} onClick={() => setSelectedMode(item.mode)}><span>{item.icon}</span><strong>{item.mode.toUpperCase()}</strong><small>{item.copy}</small></button>)}</div></section>
+      <section className="config-panel"><label>TOPIC</label><div className="chip-row">{topics.map((topic) => <button key={topic} className={selectedTopic === topic ? "active" : ""} onClick={() => setSelectedTopic(topic)}>{topic}</button>)}</div></section>
+      <section className="config-panel"><label>ENTRY FEE</label><div className="fee-grid">{fees.map((fee) => <button key={fee} className={entryFee === fee ? "active" : ""} onClick={() => setEntryFee(fee)}>◎{fee}</button>)}</div></section>
+      <button className="gradient-button launch-match" onClick={createLobby}>CREATE {selectedTopic.toUpperCase()} LOBBY</button>
+    </div>
+  );
+}
+
+function LobbiesPage({ joinLobby, lobbies, refreshLobbies }: { joinLobby: (lobbyId: string) => void; lobbies: Lobby[]; refreshLobbies: () => void }) {
+  const filters = ["All", "Waiting", "Starting", "Speed", "Classic"];
+  const activeCount = lobbies.filter((lobby) => lobby.status !== "finished").length;
+  return (
+    <div className="content lobbies-page">
+      <section className="lobby-head"><div><h2>LIVE LOBBIES</h2><p><span />{activeCount} ACTIVE LOBBIES</p></div><button className="refresh" onClick={() => void refreshLobbies()}>⟳ Refresh</button></section>
+      <section className="search-row"><div className="search-box">⌕ <span>Search lobbies, topics, hosts...</span></div><button className="filter-icon">▽</button>{filters.map((filter, index) => <button className={index === 0 ? "active" : ""} key={filter}>{filter}</button>)}</section>
+      {lobbies.length ? <section className="lobby-grid">{lobbies.map((lobby) => <LobbyCard joinLobby={joinLobby} lobby={lobby} key={lobby.lobbyId} />)}</section> : <EmptyState title="No live lobbies yet" copy="Create one from Matchmaking and it will appear here instantly." />}
+    </div>
+  );
+}
+
+function LobbyCard({ joinLobby, lobby }: { joinLobby: (lobbyId: string) => void; lobby: Lobby }) {
+  const filled = lobby.players.length;
+  const dots = Array.from({ length: Math.max(lobby.maxPlayers, 4) }, (_, index) => index < filled);
+  const isFull = filled >= lobby.maxPlayers || lobby.status !== "waiting";
+  return (
+    <article className={`lobby-card ${lobby.status === "playing" ? "starting" : lobby.status}`}>
+      <div className="lobby-card-top"><div className="host-avatar">👨‍🚀</div><div><h3>{lobby.topic} Championship <span>◎</span></h3><p>Hosted by <b>{shortAddress(lobby.host)}</b></p></div><em className={`status ${lobby.status === "playing" ? "starting" : lobby.status}`}><i />{lobby.status.toUpperCase()}</em></div>
+      <div className="lobby-tags"><span>{lobby.topic}</span><span className={(lobby.mode || "Speed").toLowerCase()}>{(lobby.mode || "Speed").toUpperCase()}</span></div>
+      <div className="lobby-meta"><span>♙ {filled}/{lobby.maxPlayers}</span><div className="dots">{dots.map((item, index) => <i className={item ? "filled" : ""} key={index} />)}</div><span className="gold">♕ ◎{lamportsToSol(lobby.entryFeeLamports)}</span><span className="cyan">◷ {Math.round(lobby.questionTimeMs / 1000)}s</span><strong>◎{lamportsToSol(lobby.entryFeeLamports)}/entry</strong><button className={isFull ? "full" : ""} onClick={() => !isFull && joinLobby(lobby.lobbyId)}>{isFull ? lobby.status.toUpperCase() : "JOIN"}</button></div>
+    </article>
+  );
+}
+
+function GamePage({
+  activeLobby,
+  activeQuestion,
+  addDemoRival,
+  address,
+  lastAnswer,
+  matchWinner,
+  playerScore,
+  remainingMs,
+  scores,
+  submitAnswer,
+  timerPct,
+}: {
+  activeLobby: Lobby | null;
+  activeQuestion: QuestionEvent | null;
+  addDemoRival: () => void;
+  address?: string;
+  lastAnswer: { correct: boolean; points: number } | null;
+  matchWinner: string;
+  playerScore: number;
+  remainingMs: number;
+  scores: Score[];
+  submitAnswer: (answerIdx: number) => void;
+  timerPct: number;
+}) {
+  if (!activeLobby) return <div className="content"><EmptyState title="No active lobby" copy="Create or join a lobby to start playing." /></div>;
+
+  if (matchWinner) {
     return (
-      <main className="home-page">
-        <section className="home-stage" aria-label="Sentinel Quiz home">
-          <div className="home-copy">
-            <p className="brand-mark">Sentinel Quiz</p>
-            <h1>Sentinel Quiz</h1>
-            <p className="home-subtitle">Wallet-first quiz battles with live matchmaking, SOL entry pools, and claim tracking.</p>
-            <div className="home-actions">
-              {walletControls}
-              <button type="button" className="primary home-find" onClick={findMatch} disabled={!isWalletConnected || socketState !== "online"}>Find Match</button>
-            </div>
-          </div>
+      <div className="content narrow">
+        <section className="result-panel"><h2>MATCH COMPLETE</h2><p>Winner: <b>{matchWinner === address ? "You" : shortAddress(matchWinner)}</b></p>{scores.map((score) => <div className="score-row" key={score.player}><span>{score.player === address ? "You" : shortAddress(score.player)}</span><strong>{score.score}</strong></div>)}</section>
+      </div>
+    );
+  }
 
-          <div className="desktop-preview" aria-hidden="true">
-            <div className="preview-nav"><span>Wallet</span><span>Match</span><span>Claim</span></div>
-            <div className="preview-hero">
-              <p>Entry Pool</p>
-              <strong>0.10 SOL</strong>
-              <button type="button" tabIndex={-1}>Join</button>
-            </div>
-            <div className="preview-cards">
-              <article><span>01</span><strong>Connect Wallet</strong></article>
-              <article className="active"><span>02</span><strong>Find Match</strong></article>
-              <article><span>03</span><strong>Claim Pot</strong></article>
-            </div>
-          </div>
-
-          <div className="mobile-preview" aria-hidden="true">
-            <div className="phone-bar"><span /> <strong>Match</strong><button type="button" tabIndex={-1}>Live</button></div>
-            <div className="phone-topic">
-              <p>Sentinel Quiz</p>
-              <strong>Pot 0.20 SOL</strong>
-              <span />
-            </div>
-            <div className="phone-question">Wallet connected. Waiting for opponent...</div>
-            <div className="phone-options">
-              <span>Player A locked</span>
-              <span>Player B joining</span>
-              <span>Escrow ready</span>
-              <span>Claim enabled</span>
-            </div>
-          </div>
+  if (!activeQuestion) {
+    return (
+      <div className="content narrow">
+        <section className="game-room">
+          <div><h2>{activeLobby.topic} Lobby</h2><p>{activeLobby.status === "waiting" ? "Waiting for enough players to start" : "Match starting..."}</p></div>
+          <div className="room-stats"><span>{activeLobby.players.length}/{activeLobby.maxPlayers} players</span><span>{activeLobby.mode || "Speed"}</span><span>◎{lamportsToSol(activeLobby.entryFeeLamports)} entry</span></div>
+          <div className="player-list">{activeLobby.players.map((player) => <div key={player.player}><span>{player.bot ? "🤖" : "👨‍🚀"}</span><strong>{player.player === address ? "You" : shortAddress(player.player)}</strong></div>)}</div>
+          {activeLobby.status === "waiting" ? <button className="gradient-button launch-match" onClick={addDemoRival}>ADD DEMO RIVAL & START</button> : null}
         </section>
-        <section className="notice-bar">{notice}</section>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="arena-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Sentinel Quiz</p>
-          <h2>{route === "/matchmake" ? "Matchmake" : route === "/lobby" ? "Lobby" : route === "/game" ? "Game Room" : route === "/settlement" ? "Claim Prize" : "Match History"}</h2>
-        </div>
-        {walletControls}
-      </header>
-
-      {appNav}
-
-      <section className="system-strip">
-        <div><span>Backend</span><strong>{API_URL}</strong></div>
-        <div><span>Realtime</span><strong className={socketState === "online" ? "ok" : "warn"}>{socketState}</strong></div>
-        <div><span>Cluster</span><strong>{rpcInfo?.cluster || SOLANA_CLUSTER}</strong></div>
-        <div><span>Join tx required</span><strong>{rpcInfo?.joinTxVerificationRequired ? "yes" : "no"}</strong></div>
+    <div className="content narrow">
+      <section className="quiz-panel">
+        <div className="quiz-head"><div><h2>{activeLobby.topic}</h2><p>Question {activeQuestion.index + 1} of {activeLobby.questionCount}</p></div><strong>{Math.ceil(remainingMs / 1000)}s</strong></div>
+        <div className="timer-track"><span style={{ width: `${timerPct}%` }} /></div>
+        <h3>{activeQuestion.text}</h3>
+        <div className="answer-grid">{activeQuestion.choices.map((choice, index) => <button key={choice} onClick={() => submitAnswer(index)} disabled={Boolean(lastAnswer)}><span>{String.fromCharCode(65 + index)}</span>{choice}</button>)}</div>
+        <div className="game-footer"><span>Your score: {playerScore}</span>{lastAnswer ? <b className={lastAnswer.correct ? "correct" : "wrong"}>{lastAnswer.correct ? `Correct +${lastAnswer.points}` : "Wrong answer"}</b> : <b>Choose fast</b>}</div>
       </section>
-
-      {route === "/matchmake" ? (
-        <section className="page-card narrow-page">
-          <div className="panel-head">
-            <div>
-              <p className="eyebrow">Matchmake</p>
-              <h2>Create match settings</h2>
-            </div>
-            <button type="button" onClick={() => void refreshDashboard()}>Refresh</button>
-          </div>
-
-          <div className="form-grid">
-            <label>Entry fee SOL<input value={entryFeeSol} onChange={(event) => setEntryFeeSol(event.target.value)} inputMode="decimal" /></label>
-            <label>Players<input type="number" min={2} max={8} value={maxPlayers} onChange={(event) => setMaxPlayers(Number(event.target.value))} /></label>
-            <label>Questions<input type="number" min={1} max={12} value={questionCount} onChange={(event) => setQuestionCount(Number(event.target.value))} /></label>
-            <label>Round seconds<input type="number" min={3} max={45} value={Math.round(questionTimeMs / 1000)} onChange={(event) => setQuestionTimeMs(Number(event.target.value) * 1000)} /></label>
-            <label>Topic<input value={topic} onChange={(event) => setTopic(event.target.value)} /></label>
-            <label>Privacy<select value={privacy} onChange={(event) => setPrivacy(event.target.value as Privacy)}><option value="public">Public</option><option value="private">Private</option></select></label>
-          </div>
-
-          <label className="wide-label">Join/deposit tx signature<input value={txSignature} onChange={(event) => setTxSignature(event.target.value)} placeholder="Optional while REQUIRE_JOIN_TX_VERIFICATION=false" /></label>
-
-          <div className="action-row">
-            <button type="button" className="primary" onClick={() => void createLobby()} disabled={!isWalletConnected}>Create Lobby</button>
-            <button type="button" onClick={findMatch} disabled={!isWalletConnected || socketState !== "online"}>Find Match</button>
-          </div>
-        </section>
-      ) : null}
-
-      {route === "/lobby" ? (
-        <section className="page-card">
-          <div className="panel-head">
-            <div>
-              <p className="eyebrow">Lobby</p>
-              <h2>Open lobbies</h2>
-            </div>
-            <span className="count-pill">{lobbies.length}</span>
-          </div>
-          <div className="lobby-list">
-            {lobbies.length === 0 ? <p className="empty">No lobbies yet. Create one from Matchmake.</p> : null}
-            {lobbies.map((lobby) => (
-              <article key={lobby.lobbyId} className="lobby-item">
-                <div>
-                  <strong>{lobby.topic}</strong>
-                  <span>{shortAddress(lobby.lobbyId)} | {lamportsToSol(lobby.entryFeeLamports)} SOL</span>
-                </div>
-                <div className="lobby-meta">
-                  <span>{lobby.players.length}/{lobby.maxPlayers}</span>
-                  <span>{lobby.status}</span>
-                </div>
-                <button type="button" onClick={() => joinLobby(lobby.lobbyId)} disabled={!isWalletConnected || lobby.status !== "waiting"}>Join</button>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {route === "/game" ? (
-        <section className="page-grid game-page">
-          <section className="page-card match-panel">
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Game</p>
-                <h2>{activeLobby ? activeLobby.topic : "Waiting for match"}</h2>
-              </div>
-              <span className="count-pill">{activeLobby?.status || "idle"}</span>
-            </div>
-
-            {activeLobby ? (
-              <div className="match-summary">
-                <div><span>Lobby</span><strong>{shortAddress(activeLobby.lobbyId)}</strong></div>
-                <div><span>Entry</span><strong>{lamportsToSol(activeLobby.entryFeeLamports)} SOL</strong></div>
-                <div><span>Players</span><strong>{activeLobby.players.length}/{activeLobby.maxPlayers}</strong></div>
-                <div><span>Your rank</span><strong>{playerRank || "-"}</strong></div>
-              </div>
-            ) : <p className="empty large">Find or join a match to start playing.</p>}
-
-            {activeQuestion ? (
-              <div className="question-card">
-                <div className="timer-track"><span style={{ width: `${timerPct}%` }} /></div>
-                <p className="question-index">Question {activeQuestion.index + 1}</p>
-                <h3>{activeQuestion.text}</h3>
-                <div className="choices-grid">
-                  {activeQuestion.choices.map((choice, index) => (
-                    <button key={choice} type="button" onClick={() => submitAnswer(index)} disabled={!isWalletConnected || remainingMs <= 0}>{choice}</button>
-                  ))}
-                </div>
-                <p className="answer-note">{lastAnswer ? `${lastAnswer.correct ? "Correct" : "Missed"} | +${lastAnswer.points} points` : `${Math.ceil(remainingMs / 1000)}s remaining`}</p>
-              </div>
-            ) : null}
-          </section>
-
-          <aside className="page-card scoreboard">
-            <div className="panel-head compact-head"><p className="eyebrow">Scoreboard</p><h2>Players</h2></div>
-            {scores.length === 0 ? <p className="empty">Scores appear once the match starts.</p> : null}
-            {scores.map((score, index) => (
-              <div key={score.player} className={score.player === address ? "score-row me" : "score-row"}>
-                <span>#{index + 1}</span>
-                <strong>{shortAddress(score.player)}</strong>
-                <em>{score.score}</em>
-              </div>
-            ))}
-          </aside>
-        </section>
-      ) : null}
-
-      {route === "/settlement" ? (
-        <section className="page-card narrow-page">
-          <div className="panel-head">
-            <div>
-              <p className="eyebrow">Claim</p>
-              <h2>Prize settlement</h2>
-            </div>
-          </div>
-          {matchEnded ? (
-            <div className="claim-box">
-              <div className="winner-line"><span>Winner</span><strong>{shortAddress(matchEnded.winner)}</strong></div>
-              <div className="winner-line"><span>Payout</span><strong>{lamportsToSol(matchEnded.payoutLamports)} SOL</strong></div>
-              <textarea readOnly value={matchEnded.signedResult.canonical} />
-              <input value={claimTxSignature} onChange={(event) => setClaimTxSignature(event.target.value)} placeholder="Claim tx signature after on-chain claim" />
-              <button type="button" className="primary" onClick={() => void recordClaim()}>Record Claim</button>
-            </div>
-          ) : <p className="empty">The server-signed result appears here when a match ends.</p>}
-        </section>
-      ) : null}
-
-      {route === "/history" ? (
-        <section className="page-card">
-          <div className="panel-head">
-            <div>
-              <p className="eyebrow">History</p>
-              <h2>Recent winners</h2>
-            </div>
-          </div>
-          <div className="history-list">
-            {history.length === 0 ? <p className="empty">No completed matches yet.</p> : null}
-            {history.map((match) => (
-              <article key={match.matchId}>
-                <div><strong>{shortAddress(match.winner)}</strong><span>{formatDate(match.finishedAt)}</span></div>
-                <p>{lamportsToSol(match.prizeLamports)} SOL | {match.players} players | {match.claimStatus || "unclaimed"}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="notice-bar">{notice}</section>
-    </main>
+    </div>
   );
+}
+
+function ProfilePage({ address, profile, saveProfile }: { address?: string; profile: Profile; saveProfile: (profile: Profile) => Promise<void> }) {
+  const [draft, setDraft] = useState(profile);
+  useEffect(() => setDraft(profile), [profile]);
+  return (
+    <div className="content narrow">
+      <section className="profile-panel">
+        <div className="page-title"><h2>PROFILE</h2><p>{address ? shortAddress(address) : "Connect a wallet to save your profile"}</p></div>
+        <label>AVATAR</label><div className="avatar-picker">{avatars.map((avatar) => <button className={draft.avatar === avatar ? "active" : ""} key={avatar} onClick={() => setDraft({ ...draft, avatar })}>{avatar}</button>)}</div>
+        <label>USERNAME</label><input value={draft.username} onChange={(event) => setDraft({ ...draft, username: event.target.value })} />
+        <label>BIO</label><textarea value={draft.bio} onChange={(event) => setDraft({ ...draft, bio: event.target.value })} />
+        <label>FAVORITE TOPIC</label><select value={draft.favoriteTopic} onChange={(event) => setDraft({ ...draft, favoriteTopic: event.target.value })}>{topics.map((topic) => <option key={topic}>{topic}</option>)}</select>
+        <button className="gradient-button launch-match" onClick={() => void saveProfile(draft)}>SAVE PROFILE</button>
+      </section>
+    </div>
+  );
+}
+
+function EmptyState({ copy, title }: { copy: string; title: string }) {
+  return <section className="empty-state"><h2>{title}</h2><p>{copy}</p></section>;
 }

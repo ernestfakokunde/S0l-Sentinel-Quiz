@@ -11,6 +11,7 @@ import questionRoutes from './routes/questionRoutes.js';
 import signingRoutes from './routes/signingRoutes.js';
 import solanaRoutes from './routes/solanaRoutes.js';
 import matchRoutes from './routes/matchRoutes.js';
+import profileRoutes from './routes/profileRoutes.js';
 import { registerWebSocketServer } from './services/websocketService.js';
 
 const app = express();
@@ -27,6 +28,7 @@ app.use('/history', historyRoutes);
 app.use('/questions', questionRoutes);
 app.use('/solana', solanaRoutes);
 app.use('/matches', matchRoutes);
+app.use('/profiles', profileRoutes);
 app.use('/', signingRoutes);
 
 const server = http.createServer(app);
