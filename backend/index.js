@@ -12,6 +12,7 @@ import signingRoutes from './routes/signingRoutes.js';
 import solanaRoutes from './routes/solanaRoutes.js';
 import matchRoutes from './routes/matchRoutes.js';
 import profileRoutes from './routes/profileRoutes.js';
+import { checkDatabaseConnection } from './services/prisma.js';
 import { registerWebSocketServer } from './services/websocketService.js';
 
 const app = express();
@@ -37,4 +38,5 @@ registerWebSocketServer(server);
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
   console.log(`Backend running at http://localhost:${PORT}`);
+  void checkDatabaseConnection();
 });

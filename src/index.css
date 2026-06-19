@@ -1749,3 +1749,281 @@ button.avatar {
     grid-template-columns: 1fr;
   }
 }
+
+.landing-nav nav button {
+  background: none;
+  color: #949bb8;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.landing-nav nav button:hover {
+  color: #f7f9ff;
+}
+
+.arena-rules .rules-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.rule-card {
+  border: 1px solid #2a1a44;
+  border-radius: 16px;
+  background: #12101c;
+  padding: 18px;
+}
+
+.rule-card small {
+  display: block;
+  color: #8ea0cf;
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.rule-card strong {
+  display: block;
+  margin: 8px 0;
+  font-family: "Orbitron", sans-serif;
+  font-size: 18px;
+}
+
+.rule-card p {
+  margin: 0;
+  color: #9ba6c4;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.chip-row.read-only {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.topic-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #2f2550;
+  border-radius: 999px;
+  background: #171523;
+  color: #c7d4f5;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.field-note {
+  margin: 10px 0 0;
+  color: #8ea0cf;
+  font-size: 14px;
+}
+
+.docs-page {
+  max-width: 1080px;
+}
+
+.docs-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.docs-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #2c6f63;
+  border-radius: 999px;
+  background: rgba(39, 242, 196, 0.08);
+  color: #27f2c4;
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.docs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.doc-card {
+  border: 1px solid #281544;
+  border-radius: 20px;
+  background: #0f0e18;
+  padding: 24px;
+}
+
+.doc-card.wide {
+  grid-column: 1 / -1;
+}
+
+.doc-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.doc-card h3 {
+  margin: 0;
+  font-family: "Orbitron", sans-serif;
+  font-size: 20px;
+}
+
+.doc-card-head em {
+  color: #27f2c4;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.doc-card p {
+  margin: 0;
+  color: #9ba6c4;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.docs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.claim-panel,
+.history-panel {
+  border: 1px solid #281544;
+  border-radius: 20px;
+  background: #0f0e18;
+  padding: 30px;
+}
+
+.claim-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.claim-payload {
+  width: 100%;
+  min-height: 160px;
+  margin-bottom: 20px;
+  border: 1px solid #2e2d3b;
+  border-radius: 16px;
+  background: #181821;
+  color: #c7d4f5;
+  padding: 14px;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.claim-step {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #281544;
+}
+
+.claim-step h3 {
+  margin: 0 0 8px;
+  font-family: "Orbitron", sans-serif;
+  font-size: 16px;
+}
+
+.claim-step p {
+  margin: 0 0 14px;
+  color: #9ba6c4;
+  line-height: 1.5;
+}
+
+.claim-step input {
+  width: 100%;
+  min-height: 54px;
+  margin-bottom: 12px;
+  border: 1px solid #2e2d3b;
+  border-radius: 16px;
+  background: #181821;
+  color: #f8fbff;
+  padding: 0 16px;
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #281544;
+  border-radius: 16px;
+  background: #12101c;
+  padding: 16px 18px;
+}
+
+.history-row strong {
+  display: block;
+  font-size: 18px;
+}
+
+.history-row p {
+  margin: 6px 0;
+  color: #9ba6c4;
+  font-size: 14px;
+}
+
+.history-row em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.history-row em.claimed {
+  color: #27f2c4;
+}
+
+.history-row em.pending {
+  color: #f5c451;
+}
+
+.topbar .api-error {
+  color: #ff8b8b;
+  font-size: 11px;
+}
+
+.result-panel .gradient-button {
+  margin-top: 20px;
+}
+
+@media (max-width: 900px) {
+  .arena-rules .rules-grid,
+  .docs-grid,
+  .claim-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .docs-hero {
+    flex-direction: column;
+  }
+
+  .history-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

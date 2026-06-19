@@ -1,7 +1,41 @@
+import type { PropsWithChildren } from "react";
+
 export type Privacy = "public" | "private";
 export type LobbyStatus = "waiting" | "playing" | "finished" | "cancelled";
 export type ConnectionState = "offline" | "connecting" | "online";
+export type GameMode = "Speed" | "Classic" | "Survival";
+
+export type AppRoute =
+  | "/"
+  | "/dashboard"
+  | "/matchmake"
+  | "/lobby"
+  | "/game"
+  | "/settlement"
+  | "/leaderboard"
+  | "/history"
+  | "/profile"
+  | "/admin"
+  | "/docs";
+
+/** @deprecated Use AppRoute in new code */
 export type RoutePath = "/" | "/find-match" | "/matchmake" | "/lobby" | "/game" | "/settlement" | "/history";
+
+export type Profile = {
+  wallet: string;
+  username: string;
+  avatar: string;
+  bio: string;
+  favoriteTopic: string;
+};
+
+export type WalletSession = {
+  route?: AppRoute;
+  selectedMode?: GameMode;
+  activeLobbyId?: string;
+  pendingClaimMatchId?: string;
+  updatedAt?: string;
+};
 
 export type LobbyPlayer = {
   player: string;
@@ -9,16 +43,19 @@ export type LobbyPlayer = {
   txSignature?: string | null;
   txVerified?: boolean;
   score?: number;
+  bot?: boolean;
 };
 
 export type Lobby = {
   lobbyId: string;
+  lobbyIdHash?: string;
   host?: string;
   entryFeeLamports: string;
   maxPlayers: number;
   questionCount: number;
   questionTimeMs: number;
   topic: string;
+  mode?: GameMode;
   privacy: Privacy;
   status: LobbyStatus;
   players: LobbyPlayer[];
@@ -49,13 +86,14 @@ export type SignedResult = {
   signatureBase64: string;
   publicKeyBase64: string;
   resultHash: string;
-  ephemeralSigner: boolean;
+  ephemeralSigner?: boolean;
 };
 
 export type MatchEnded = {
   type: "match_ended";
   matchId: string;
   lobbyId: string;
+  lobbyIdHash?: string;
   winner: string;
   payoutLamports: string;
   treasuryFeeLamports: string;
@@ -81,6 +119,8 @@ export type RpcInfo = {
   rpcUrl: string;
   commitment: string;
   joinTxVerificationRequired: boolean;
+  vaultProgramAddress?: string;
+  treasuryAddress?: string | null;
 };
 
 export type ServerMessage = {
@@ -104,4 +144,60 @@ export type ServerMessage = {
   totalPotLamports?: string;
   signedResult?: SignedResult;
   lobbyId?: string;
+  lobbyIdHash?: string;
 };
+
+export type ApiRequestState = {
+  loading: boolean;
+  error: string | null;
+  lastPath: string | null;
+};
+
+export type NavItem = {
+  label: string;
+  route: AppRoute;
+  icon: string;
+};
+
+export type ArenaContextValue = {
+  api: ApiRequestState;
+  backendOnline: boolean | null;
+  rpcInfo: RpcInfo | null;
+  socketState: ConnectionState;
+  route: AppRoute;
+  notice: string;
+  setNotice: (message: string) => void;
+  navigate: (route: AppRoute) => void;
+  profile: Profile;
+  lobbies: Lobby[];
+  history: HistoryMatch[];
+  activeLobby: Lobby | null;
+  activeQuestion: QuestionEvent | null;
+  scores: Score[];
+  lastAnswer: { correct: boolean; points: number } | null;
+  matchWinner: string;
+  matchEnded: MatchEnded | null;
+  claimTxSignature: string;
+  claimSubmitting: boolean;
+  setClaimTxSignature: (value: string) => void;
+  selectedMode: GameMode;
+  setSelectedMode: (mode: GameMode) => void;
+  remainingMs: number;
+  timerPct: number;
+  playerScore: number;
+  refreshLobbies: () => Promise<void>;
+  refreshHistory: () => Promise<void>;
+  saveProfile: (profile: Profile) => Promise<void>;
+  createLobby: () => void;
+  quickMatch: () => void;
+  joinLobby: (lobbyId: string) => void;
+  addDemoRival: () => void;
+  submitAnswer: (answerIdx: number) => void;
+  recordClaim: () => Promise<void>;
+  claimPrizeOnchain: () => Promise<void>;
+  loadMatchForClaim: (matchId: string) => Promise<void>;
+};
+
+export type ArenaProviderProps = PropsWithChildren<{
+  walletAddress?: string;
+}>;

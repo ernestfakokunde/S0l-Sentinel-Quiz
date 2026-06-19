@@ -93,8 +93,8 @@ model PlayerJoin {
   lobbyId          String
   matchId          String?
   player           String
-  depositPda       string?
-  refunded Boolean @default(false)
+  depositPda       String?
+  refunded         Boolean  @default(false)
   refundTxSignature String?
   txSignature      String?
   txVerified       Boolean  @default(false)

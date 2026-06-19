@@ -38,10 +38,13 @@ function getConnection() {
 function getRpcInfo() {
   return {
     cluster: getCluster(),
+    rpcUrl: getRpcUrl(),
     rpcConfigured: Boolean(process.env.RPC_URL || process.env.SOLANA_RPC_URL),
     wssRpcConfigured: Boolean(process.env.WSS_RPC_URL || process.env.SOLANA_WSS_RPC_URL),
     commitment: getCommitment(),
     joinTxVerificationRequired: process.env.REQUIRE_JOIN_TX_VERIFICATION === 'true',
+    vaultProgramAddress: process.env.VAULT_PROGRAM_ADDRESS || 'Ah28Tt2zCqnMTcKjSwYvFayc7gB1Q98cNqsTHA2hE7wn',
+    treasuryAddress: process.env.TREASURY_ADDRESS || null,
   };
 }
 

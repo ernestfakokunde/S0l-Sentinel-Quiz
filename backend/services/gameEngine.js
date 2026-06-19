@@ -6,7 +6,7 @@ import { verifyTransactionSignature } from './solanaRpcService.js';
 import { hashlobbyid } from './hashlobbyid.js';
 
 const DEFAULTS = {
-  entryFeeLamports: '100000000',
+  entryFeeLamports: '1000000',
   maxPlayers: 2,
   questionCount: 5,
   questionTimeMs: 15000,
@@ -67,10 +67,10 @@ class GameEngine {
         players: lobby.players.length,
         playerWallets: lobby.players.map(({ player }) => player),
         questionCount: lobby.questionCount,
-      questionTimeMs: lobby.questionTimeMs,
-      topic: lobby.topic,
-      mode: lobby.mode,
-      privacy: lobby.privacy,
+        questionTimeMs: lobby.questionTimeMs,
+        topic: lobby.topic,
+        mode: lobby.mode,
+        privacy: lobby.privacy,
         status: lobby.status,
         onchainLobbyPda: lobby.onchainLobbyPda,
         escrowPda: lobby.escrowPda,
@@ -388,6 +388,7 @@ class GameEngine {
     const resultPayload = {
       matchId: match.matchId,
       lobbyId: lobby.lobbyId,
+      lobbyIdHash: lobby.lobbyIdHash,
       winner,
       payoutLamports: payoutLamports.toString(),
       treasuryFeeLamports: treasuryFeeLamports.toString(),
@@ -425,6 +426,7 @@ class GameEngine {
       type: 'match_ended',
       matchId: match.matchId,
       lobbyId: lobby.lobbyId,
+      lobbyIdHash: lobby.lobbyIdHash,
       winner,
       payoutLamports: payoutLamports.toString(),
       treasuryFeeLamports: treasuryFeeLamports.toString(),
@@ -440,6 +442,7 @@ class GameEngine {
   publicLobby(lobby) {
     return {
       lobbyId: lobby.lobbyId,
+      lobbyIdHash: lobby.lobbyIdHash,
       host: lobby.host,
       entryFeeLamports: lobby.entryFeeLamports,
       maxPlayers: lobby.maxPlayers,
