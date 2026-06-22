@@ -9,7 +9,9 @@
     "start": "node index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "signer:pubkey": "node scripts/print-result-signer.js",
+    "vault:init-config": "node scripts/initialize-vault-config.js"
   },
   "engines": {
     "node": ">=18"

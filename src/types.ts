@@ -106,6 +106,7 @@ export type HistoryMatch = {
   matchId: string;
   lobbyId?: string;
   winner: string;
+  result?: "win" | "loss";
   prizeLamports: string;
   totalPotLamports?: string;
   treasuryFeeLamports?: string;
@@ -188,10 +189,11 @@ export type ArenaContextValue = {
   refreshLobbies: () => Promise<void>;
   refreshHistory: () => Promise<void>;
   saveProfile: (profile: Profile) => Promise<void>;
-  createLobby: () => void;
-  quickMatch: () => void;
-  joinLobby: (lobbyId: string) => void;
+  createLobby: () => Promise<void>;
+  quickMatch: () => Promise<void>;
+  joinLobby: (lobbyId: string) => Promise<void>;
   addDemoRival: () => void;
+  cancelLobby: (lobbyId?: string) => Promise<void>;
   submitAnswer: (answerIdx: number) => void;
   recordClaim: () => Promise<void>;
   claimPrizeOnchain: () => Promise<void>;

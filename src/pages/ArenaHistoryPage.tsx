@@ -28,7 +28,7 @@ export function ArenaHistoryPage({ history, address, onRefresh, onOpenClaim }: A
               return (
                 <article className="history-row" key={match.matchId}>
                   <div>
-                    <strong>{isWinner ? "You won" : shortAddress(match.winner)}</strong>
+                    <strong>{isWinner ? "You won" : `Lost to ${shortAddress(match.winner)}`}</strong>
                     <p>
                       ◎ {lamportsToSol(match.prizeLamports)} prize • {match.players} players • {formatDate(match.finishedAt)}
                     </p>

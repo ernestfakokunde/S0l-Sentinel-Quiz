@@ -87,11 +87,8 @@ export function VaultCard() {
 
       setTxStatus(`Deposited! Signature: ${signature?.slice(0, 20)}...`);
       setAmount("");
-    } catch (err) {
-      console.error("Deposit failed:", err);
-      setTxStatus(
-        `Error: ${err instanceof Error ? err.message : "Unknown error"}`
-      );
+    } catch {
+      setTxStatus("Transaction could not be completed. Please try again.");
     }
   }, [walletAddress, vaultAddress, amount, send]);
 
@@ -119,11 +116,8 @@ export function VaultCard() {
       });
 
       setTxStatus(`Withdrawn! Signature: ${signature?.slice(0, 20)}...`);
-    } catch (err) {
-      console.error("Withdraw failed:", err);
-      setTxStatus(
-        `Error: ${err instanceof Error ? err.message : "Unknown error"}`
-      );
+    } catch {
+      setTxStatus("Transaction could not be completed. Please try again.");
     }
   }, [walletAddress, vaultAddress, send]);
 

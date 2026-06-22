@@ -53,13 +53,15 @@ export async function saveProfile(wallet: string, profile: Profile) {
   return payload.profile;
 }
 
-export async function fetchHistory() {
-  const payload = await apiFetch<{ matches: MatchRecord[] }>("/history");
+export async function fetchHistory(wallet?: string) {
+  const query = wallet ? `?wallet=${encodeURIComponent(wallet)}` : "";
+  const payload = await apiFetch<{ matches: MatchRecord[] }>(`/history${query}`);
   return payload.matches.map(
     (match): HistoryMatch => ({
       matchId: match.matchId,
       lobbyId: match.lobbyId || undefined,
       winner: match.winner,
+      result: wallet ? (match.winner === wallet ? "win" : "loss") : undefined,
       prizeLamports: String(match.prizeLamports),
       totalPotLamports: match.totalPotLamports ? String(match.totalPotLamports) : undefined,
       treasuryFeeLamports: match.treasuryFeeLamports ? String(match.treasuryFeeLamports) : undefined,

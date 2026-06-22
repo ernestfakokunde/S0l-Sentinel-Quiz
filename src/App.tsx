@@ -74,15 +74,15 @@ export default function App() {
           setSelectedMode={arena.setSelectedMode}
         />
       ) : arena.route === "/lobby" ? (
-        <LobbiesPage joinLobby={arena.joinLobby} lobbies={arena.lobbies} refreshLobbies={arena.refreshLobbies} />
+        <LobbiesPage address={address} cancelLobby={arena.cancelLobby} joinLobby={arena.joinLobby} lobbies={arena.lobbies} refreshLobbies={arena.refreshLobbies} />
       ) : arena.route === "/docs" ? (
         <DocsPage navigate={arena.navigate} />
       ) : arena.route === "/game" ? (
         <GamePage
           activeLobby={arena.activeLobby}
           activeQuestion={arena.activeQuestion}
-          addDemoRival={arena.addDemoRival}
           address={address}
+          cancelLobby={arena.cancelLobby}
           lastAnswer={arena.lastAnswer}
           matchWinner={arena.matchWinner}
           onClaimPrize={() => arena.navigate("/settlement")}
@@ -212,7 +212,7 @@ function ArenaShell({
   socketState: string;
   status: string;
 }) {
-  const backendLabel = backendOnline === false ? "API OFFLINE" : backendOnline ? "API ONLINE" : "API …";
+  const backendLabel = backendOnline ? "SYNC READY" : "SYNCING";
 
   return (
     <main className="arena">
@@ -248,7 +248,6 @@ function ArenaShell({
         <header className="topbar">
           <div className="live-pill">
             <i>⌁</i> {socketState.toUpperCase()} • {backendLabel}
-            {apiError ? <small className="api-error"> • {apiError}</small> : null}
           </div>
           <div className="top-actions">
             <div className="wallet-select">
@@ -275,7 +274,7 @@ function ArenaShell({
           </div>
         </header>
         {children}
-        <div className="notice">{notice}</div>
+        <div className={`notice ${apiError ? "error" : ""}`}>{apiError || notice}</div>
       </section>
     </main>
   );
@@ -343,8 +342,8 @@ function MatchmakingPage({
   selectedMode,
   setSelectedMode,
 }: {
-  createLobby: () => void;
-  quickMatch: () => void;
+  createLobby: () => Promise<void>;
+  quickMatch: () => Promise<void>;
   selectedMode: GameMode;
   setSelectedMode: (value: GameMode) => void;
 }) {
@@ -361,8 +360,8 @@ function MatchmakingPage({
         <p>Pick a mode — topic and entry fee are fixed by the arena</p>
       </section>
       <div className="segmented">
-        <button className="active" onClick={quickMatch}>ϟ QUICK MATCH</button>
-        <button onClick={createLobby}>＋ CREATE LOBBY</button>
+        <button className="active" onClick={() => void quickMatch()}>ϟ QUICK MATCH</button>
+        <button onClick={() => void createLobby()}>＋ CREATE LOBBY</button>
       </div>
       <section className="config-panel">
         <label>GAME MODE</label>
@@ -402,7 +401,7 @@ function MatchmakingPage({
           ))}
         </div>
       </section>
-      <button className="gradient-button launch-match" onClick={createLobby}>
+      <button className="gradient-button launch-match" onClick={() => void createLobby()}>
         CREATE LOBBY
       </button>
     </div>
@@ -410,11 +409,15 @@ function MatchmakingPage({
 }
 
 function LobbiesPage({
+  address,
+  cancelLobby,
   joinLobby,
   lobbies,
   refreshLobbies,
 }: {
-  joinLobby: (lobbyId: string) => void;
+  address?: string;
+  cancelLobby: (lobbyId?: string) => Promise<void>;
+  joinLobby: (lobbyId: string) => Promise<void>;
   lobbies: Lobby[];
   refreshLobbies: () => void;
 }) {
@@ -438,7 +441,7 @@ function LobbiesPage({
       {activeLobbies.length ? (
         <section className="lobby-grid">
           {activeLobbies.map((lobby) => (
-            <LobbyCard joinLobby={joinLobby} lobby={lobby} key={lobby.lobbyId} />
+            <LobbyCard address={address} cancelLobby={cancelLobby} joinLobby={joinLobby} lobby={lobby} key={lobby.lobbyId} />
           ))}
         </section>
       ) : (
@@ -448,10 +451,21 @@ function LobbiesPage({
   );
 }
 
-function LobbyCard({ joinLobby, lobby }: { joinLobby: (lobbyId: string) => void; lobby: Lobby }) {
+function LobbyCard({
+  address,
+  cancelLobby,
+  joinLobby,
+  lobby,
+}: {
+  address?: string;
+  cancelLobby: (lobbyId?: string) => Promise<void>;
+  joinLobby: (lobbyId: string) => Promise<void>;
+  lobby: Lobby;
+}) {
   const filled = lobby.players.length;
   const dots = Array.from({ length: Math.max(lobby.maxPlayers, 4) }, (_, index) => index < filled);
   const isFull = filled >= lobby.maxPlayers || lobby.status !== "waiting";
+  const isHost = Boolean(address && lobby.host === address);
 
   return (
     <article className={`lobby-card ${lobby.status === "playing" ? "starting" : lobby.status}`}>
@@ -486,9 +500,14 @@ function LobbyCard({ joinLobby, lobby }: { joinLobby: (lobbyId: string) => void;
         <span className="gold">♕ ◎{lamportsToSol(lobby.entryFeeLamports)}</span>
         <span className="cyan">◷ {Math.round(lobby.questionTimeMs / 1000)}s</span>
         <strong>◎{lamportsToSol(lobby.entryFeeLamports)}/entry</strong>
-        <button className={isFull ? "full" : ""} onClick={() => !isFull && joinLobby(lobby.lobbyId)}>
+        <button className={isFull ? "full" : ""} onClick={() => !isFull && void joinLobby(lobby.lobbyId)}>
           {isFull ? lobby.status.toUpperCase() : "JOIN"}
         </button>
+        {isHost && lobby.status === "waiting" ? (
+          <button className="full" onClick={() => void cancelLobby(lobby.lobbyId)}>
+            CANCEL
+          </button>
+        ) : null}
       </div>
     </article>
   );
@@ -497,8 +516,8 @@ function LobbyCard({ joinLobby, lobby }: { joinLobby: (lobbyId: string) => void;
 function GamePage({
   activeLobby,
   activeQuestion,
-  addDemoRival,
   address,
+  cancelLobby,
   lastAnswer,
   matchWinner,
   onClaimPrize,
@@ -510,8 +529,8 @@ function GamePage({
 }: {
   activeLobby: Lobby | null;
   activeQuestion: QuestionEvent | null;
-  addDemoRival: () => void;
   address?: string;
+  cancelLobby: (lobbyId?: string) => Promise<void>;
   lastAnswer: { correct: boolean; points: number } | null;
   matchWinner: string;
   onClaimPrize: () => void;
@@ -577,9 +596,9 @@ function GamePage({
               </div>
             ))}
           </div>
-          {activeLobby.status === "waiting" ? (
-            <button className="gradient-button launch-match" onClick={addDemoRival}>
-              ADD DEMO RIVAL & START
+          {activeLobby.status === "waiting" && activeLobby.host === address ? (
+            <button className="outline-button" onClick={() => void cancelLobby(activeLobby.lobbyId)}>
+              CANCEL & REFUND
             </button>
           ) : null}
         </section>

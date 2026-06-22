@@ -6,7 +6,8 @@ async function readProfile(req, res) {
     if (!profile) return res.status(404).json({ error: 'Profile not found' });
     return res.json({ profile });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('Profile lookup failed', err);
+    return res.status(500).json({ error: 'Profile could not be loaded' });
   }
 }
 
@@ -15,7 +16,8 @@ async function saveProfile(req, res) {
     const profile = await upsertProfile(req.params.wallet, req.body || {});
     return res.json({ profile });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    console.error('Profile save failed', err);
+    return res.status(400).json({ error: 'Profile could not be saved' });
   }
 }
 

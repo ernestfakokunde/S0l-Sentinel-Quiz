@@ -215,6 +215,43 @@ class GameEngine {
     return this.publicLobby(lobby);
   }
 
+
+  async cancelLobby({ lobbyId, player, txSignature }) {
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) throw new Error('Lobby not found');
+    if (!player) throw new Error('Player wallet is required');
+    if (lobby.host !== player) throw new Error('Only the lobby host can cancel');
+    if (lobby.status !== 'waiting') throw new Error('Only waiting lobbies can be cancelled');
+    const requireOnchainEscrow = process.env.REQUIRE_ONCHAIN_ESCROW === 'true';
+    if (requireOnchainEscrow && !txSignature) throw new Error('Cancel/refund transaction signature is required');
+
+    let txVerification = null;
+    if (txSignature) {
+      txVerification = await verifyTransactionSignature(txSignature);
+      if (!txVerification.verified) {
+        throw new Error(txVerification.reason || 'Cancel/refund transaction could not be verified');
+      }
+    }
+
+    lobby.status = 'cancelled';
+    lobby.cancelTxSignature = txSignature;
+    lobby.cancelledAt = new Date().toISOString();
+
+    await prisma.playerJoin.updateMany({
+      where: { lobbyId: lobby.lobbyId },
+      data: {
+        refunded: Boolean(txSignature),
+        refundTxSignature: txSignature || null,
+      },
+    }).catch((err) => console.warn('Could not persist lobby refunds:', err.message));
+
+    await this.persistLobbySnapshot(lobby)
+      .catch((err) => console.warn('Lobby cancel update failed:', err.message));
+
+    this.broadcast(lobbyId, { type: 'lobby_cancelled', lobby: this.publicLobby(lobby), txSignature });
+    return this.publicLobby(lobby);
+  }
+
   async addBotToLobby(lobbyId, name = 'DemoRival') {
     const lobby = this.lobbies.get(lobbyId);
     if (!lobby) throw new Error('Lobby not found');
@@ -356,7 +393,7 @@ class GameEngine {
 
     if (answers.size >= lobby.players.length) {
       if (match.timer) clearTimeout(match.timer);
-      match.timer = setTimeout(() => this.nextQuestion(lobbyId), 600);
+      match.timer = setTimeout(() => this.nextQuestion(lobbyId), 150);
     }
 
     return { correct, points, scores };

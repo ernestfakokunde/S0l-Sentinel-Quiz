@@ -52,6 +52,16 @@ async function handleMessage(ws, rawMessage) {
       break;
     }
 
+    case 'cancel_lobby': {
+      const lobby = await gameEngine.cancelLobby({
+        lobbyId: data.lobbyId || ws.lobbyId,
+        player: data.player || ws.player,
+        txSignature: data.txSignature,
+      });
+      send(ws, { type: 'cancelled', lobby });
+      break;
+    }
+
     case 'add_bot': {
       const lobby = await gameEngine.addBotToLobby(data.lobbyId || ws.lobbyId, data.name);
       send(ws, { type: 'bot_added', lobby });
@@ -74,7 +84,7 @@ async function handleMessage(ws, rawMessage) {
       break;
 
     default:
-      send(ws, { type: 'error', message: `Unknown message type: ${data.type}` });
+      send(ws, { type: 'error', message: 'Realtime request could not be handled' });
   }
 }
 
@@ -89,7 +99,8 @@ function registerWebSocketServer(server) {
       try {
         await handleMessage(ws, message);
       } catch (err) {
-        send(ws, { type: 'error', message: err.message });
+        console.error('WebSocket action failed', err);
+        send(ws, { type: 'error', message: 'Realtime request could not be handled' });
       }
     });
 

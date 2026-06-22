@@ -5197,7 +5197,10 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "litesvm",
+ "solana-instructions-sysvar",
  "solana-sdk",
+ "solana-sdk-ids",
+ "solana-sha256-hasher",
 ]
 
 [[package]]

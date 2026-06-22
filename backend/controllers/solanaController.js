@@ -9,7 +9,8 @@ async function verifyTransaction(req, res) {
     const result = await verifyTransactionSignature(req.body?.txSignature);
     return res.json({ transaction: result });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    console.error('Transaction verification failed', err);
+    return res.status(400).json({ error: 'Transaction could not be verified' });
   }
 }
 

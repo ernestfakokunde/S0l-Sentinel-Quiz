@@ -27,13 +27,10 @@
 mod constant;
 
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{
-    ed25519_program,
-    hash::hash,
-    sysvar::instructions::{load_instruction_at_checked, ID as INSTRUCTIONS_SYSVAR_ID},
-};
+use solana_instructions_sysvar::{load_instruction_at_checked, ID as INSTRUCTIONS_SYSVAR_ID};
+use solana_sha256_hasher::hash;
 use anchor_lang::system_program::{transfer, Transfer};
-use constant::{CONFIG_SEED, ESCROW_SEED, LOBBY_SEED, MAX_PLAYERS};
+use constant::{CONFIG_SEED, ESCROW_SEED, LOBBY_SEED, MAX_PLAYERS, MAX_PLAYERS_USIZE};
 
 declare_id!("Ah28Tt2zCqnMTcKjSwYvFayc7gB1Q98cNqsTHA2hE7wn");
 
@@ -76,12 +73,13 @@ pub struct Lobby {
     pub entry_fee: u64,    // copied from Config at create time
     pub max_players: u8,   // fixed at 2 for this arena
     pub player_count: u8,
+    pub players: [Pubkey; MAX_PLAYERS_USIZE],
     pub status: u8,        // LobbyStatus as u8
     pub bump: u8,
 }
 
 impl Lobby {
-    pub const SIZE: usize = 8 + 32 + 32 + 8 + 1 + 1 + 1 + 1;
+    pub const SIZE: usize = 8 + 32 + 32 + 8 + 1 + 1 + (32 * MAX_PLAYERS_USIZE) + 1 + 1;
 }
 
 /// Escrow PDA (seeds: ["escrow", lobby_id]) — holds deposited SOL for one lobby.
@@ -127,6 +125,7 @@ pub mod vault {
         lobby.entry_fee = ctx.accounts.global_config.entry_fee;
         lobby.max_players = MAX_PLAYERS;
         lobby.player_count = 0;
+        lobby.players = [Pubkey::default(); MAX_PLAYERS_USIZE];
         lobby.status = LobbyStatus::Open as u8;
         lobby.bump = ctx.bumps.lobby;
         Ok(())
@@ -146,6 +145,12 @@ pub mod vault {
             lobby.player_count < lobby.max_players,
             ErrorCode::LobbyFull
         );
+        require!(
+            !lobby.players[..lobby.player_count as usize]
+                .iter()
+                .any(|player| *player == ctx.accounts.player.key()),
+            ErrorCode::PlayerAlreadyJoined
+        );
 
         transfer(
             CpiContext::new(
@@ -158,6 +163,8 @@ pub mod vault {
             entry_fee,
         )?;
 
+        let player_index = lobby.player_count as usize;
+        lobby.players[player_index] = ctx.accounts.player.key();
         lobby.player_count = lobby
             .player_count
             .checked_add(1)
@@ -167,6 +174,50 @@ pub mod vault {
             lobby.status = LobbyStatus::Locked as u8;
         }
 
+        Ok(())
+    }
+
+
+
+    /// Cancels a lobby before settlement and refunds all joined players.
+    /// The host signs cancellation; both player refund accounts are supplied so the
+    /// escrow can return each deposited entry fee in one transaction.
+    pub fn cancel_lobby(ctx: Context<CancelLobby>) -> Result<()> {
+        let lobby = &mut ctx.accounts.lobby;
+
+        require!(
+            lobby.status == LobbyStatus::Open as u8 || lobby.status == LobbyStatus::Locked as u8,
+            ErrorCode::LobbyNotCancellable
+        );
+        require!(ctx.accounts.host.key() == lobby.host, ErrorCode::UnauthorizedCancel);
+
+        let refund_accounts = [
+            ctx.accounts.player_one.to_account_info(),
+            ctx.accounts.player_two.to_account_info(),
+        ];
+        let entry_fee = lobby.entry_fee;
+
+        for index in 0..lobby.player_count as usize {
+            let player_key = lobby.players[index];
+            let refund_account = &refund_accounts[index];
+            require!(
+                refund_account.key() == player_key,
+                ErrorCode::RefundAccountMismatch
+            );
+            require!(
+                ctx.accounts.escrow.to_account_info().lamports() >= entry_fee,
+                ErrorCode::InsufficientEscrowFunds
+            );
+
+            **ctx
+                .accounts
+                .escrow
+                .to_account_info()
+                .try_borrow_mut_lamports()? -= entry_fee;
+            **refund_account.try_borrow_mut_lamports()? += entry_fee;
+        }
+
+        lobby.status = LobbyStatus::Cancelled as u8;
         Ok(())
     }
 
@@ -273,7 +324,7 @@ fn verify_ed25519_ix(
 ) -> Result<()> {
     let ix = load_instruction_at_checked(0, instructions)?;
     require!(
-        ix.program_id == ed25519_program::ID,
+        ix.program_id == solana_sdk_ids::ed25519_program::id(),
         ErrorCode::MissingEd25519Instruction
     );
     require!(ix.data.len() >= 16, ErrorCode::InvalidEd25519Instruction);
@@ -403,6 +454,38 @@ pub struct JoinLobby<'info> {
     pub system_program: Program<'info, System>,
 }
 
+
+/// Accounts for cancel_lobby.
+#[derive(Accounts)]
+pub struct CancelLobby<'info> {
+    #[account(mut)]
+    pub host: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [LOBBY_SEED, lobby.lobby_id.as_ref()],
+        bump = lobby.bump,
+    )]
+    pub lobby: Account<'info, Lobby>,
+
+    #[account(
+        mut,
+        seeds = [ESCROW_SEED, lobby.lobby_id.as_ref()],
+        bump,
+    )]
+    pub escrow: Account<'info, Escrow>,
+
+    /// CHECK: checked against lobby.players[0] when present.
+    #[account(mut)]
+    pub player_one: UncheckedAccount<'info>,
+
+    /// CHECK: checked against lobby.players[1] when present.
+    #[account(mut)]
+    pub player_two: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
 /// Accounts for claim_prize.
 #[derive(Accounts)]
 pub struct ClaimPrize<'info> {
@@ -447,6 +530,14 @@ pub enum ErrorCode {
     LobbyNotOpen,
     #[msg("Lobby is already full")]
     LobbyFull,
+    #[msg("Player has already joined this lobby")]
+    PlayerAlreadyJoined,
+    #[msg("Lobby cannot be cancelled in its current state")]
+    LobbyNotCancellable,
+    #[msg("Only the lobby host can cancel")]
+    UnauthorizedCancel,
+    #[msg("Refund account does not match the joined player")]
+    RefundAccountMismatch,
     #[msg("Lobby is not ready to be claimed")]
     LobbyNotClaimable,
     #[msg("Signed lobby id does not match the lobby account")]

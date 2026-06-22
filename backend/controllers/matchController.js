@@ -8,7 +8,8 @@ async function getMatch(req, res) {
     if (!match) return res.status(404).json({ error: 'Match not found' });
     return res.json({ match: toJsonSafe(match) });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('Match lookup failed', err);
+    return res.status(500).json({ error: 'Match could not be loaded' });
   }
 }
 
@@ -19,7 +20,8 @@ async function recordClaim(req, res) {
 
     const verification = await verifyTransactionSignature(claimTxSignature);
     if (!verification.verified) {
-      return res.status(400).json({ error: verification.reason, verification });
+      console.warn('Claim verification failed', verification.reason);
+      return res.status(400).json({ error: 'Claim transaction could not be verified' });
     }
 
     const match = await prisma.match.update({
@@ -33,7 +35,8 @@ async function recordClaim(req, res) {
 
     return res.json({ match: toJsonSafe(match), verification });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('Claim record failed', err);
+    return res.status(500).json({ error: 'Claim could not be recorded' });
   }
 }
 

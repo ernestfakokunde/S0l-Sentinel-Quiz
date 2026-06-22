@@ -22,7 +22,7 @@ import {
   saveProfile as saveProfileRequest,
 } from "../api/endpoints";
 import { WS_URL } from "../api/config";
-import { FIXED_ENTRY_FEE_LAMPORTS, pickArenaTopic } from "../gameConfig";
+import { ENABLE_ONCHAIN_ESCROW, FIXED_ENTRY_FEE_LAMPORTS, pickArenaTopic } from "../gameConfig";
 import type {
   ApiRequestState,
   ArenaContextValue,
@@ -38,7 +38,13 @@ import type {
   Score,
   ServerMessage,
 } from "../types";
-import { buildClaimPrizeInstructions } from "../claimTransaction";
+import {
+  assertVaultFunding,
+  buildCancelLobbyInstructions,
+  buildClaimPrizeInstructions,
+  buildCreateLobbyAndJoinInstructions,
+  buildJoinLobbyInstructions,
+} from "../vaultTransactions";
 import {
   defaultProfile,
   normalizeRoute,
@@ -77,6 +83,13 @@ function toMatchEnded(data: ServerMessage): MatchEnded | null {
   };
 }
 
+function friendlyErrorMessage(err: unknown) {
+  const message = err instanceof Error ? err.message : "";
+  if (/wallet/i.test(message)) return "Wallet action could not be completed.";
+  if (/connect|network|fetch|connection/i.test(message)) return "Connection issue. Please try again shortly.";
+  return "Action could not be completed. Please try again.";
+}
+
 export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
   const socketRef = useRef<WebSocket | null>(null);
   const navigateRef = useRef<(route: AppRoute) => void>(() => {});
@@ -108,7 +121,7 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
       setApi({ loading: false, error: null, lastPath: path });
       return result;
     } catch (err) {
-      const message = (err as Error).message;
+      const message = friendlyErrorMessage(err);
       setApi({ loading: false, error: message, lastPath: path });
       setNotice(message);
       return null;
@@ -135,9 +148,9 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
   }, [runApi]);
 
   const refreshHistory = useCallback(async () => {
-    const next = await runApi("/history", fetchHistory);
+    const next = await runApi("/history", () => fetchHistory(walletAddress));
     if (next) setHistory(next);
-  }, [runApi]);
+  }, [runApi, walletAddress]);
 
   const loadMatchForClaim = useCallback(async (matchId: string) => {
     const match = await runApi(`/matches/${matchId}`, () => fetchMatch(matchId));
@@ -186,34 +199,113 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
     privacy: "public" as const,
   }), [selectedMode]);
 
-  const createLobby = useCallback(() => {
+  const createLobby = useCallback(async () => {
     if (!walletAddress) return setNotice("Connect a wallet before creating a lobby.");
+    const lobbyId = crypto.randomUUID();
+    const payload = arenaMatchPayload();
+
+    if (!ENABLE_ONCHAIN_ESCROW) {
+      sendSocket({
+        type: "create_lobby",
+        lobbyId,
+        host: walletAddress,
+        player: walletAddress,
+        ...payload,
+      });
+      return;
+    }
+
+    const result = await runApi("create_lobby_onchain", async () => {
+      await assertVaultFunding({ payer: walletAddress as Address, createsLobby: true, rpcUrl: rpcInfo?.rpcUrl });
+      const { instructions, pdas } = await buildCreateLobbyAndJoinInstructions(lobbyId, walletAddress as Address);
+      const txSignature = await send({ instructions });
+      if (!txSignature) throw new Error("Wallet did not return a lobby deposit transaction signature.");
+      return { txSignature, pdas };
+    });
+    if (!result) return;
+
     sendSocket({
       type: "create_lobby",
+      lobbyId,
       host: walletAddress,
       player: walletAddress,
-      ...arenaMatchPayload(),
+      txSignature: result.txSignature,
+      createdTxSignature: result.txSignature,
+      onchainLobbyPda: result.pdas.lobby,
+      escrowPda: result.pdas.escrow,
+      ...payload,
     });
-  }, [arenaMatchPayload, sendSocket, walletAddress]);
+  }, [arenaMatchPayload, rpcInfo?.rpcUrl, runApi, send, sendSocket, walletAddress]);
 
-  const quickMatch = useCallback(() => {
-    if (!walletAddress) return setNotice("Connect a wallet before matchmaking.");
-    sendSocket({
-      type: "find_match",
-      player: walletAddress,
-      ...arenaMatchPayload(),
-    });
-  }, [arenaMatchPayload, sendSocket, walletAddress]);
-
-  const joinLobby = useCallback((lobbyId: string) => {
+  const joinLobby = useCallback(async (lobbyId: string) => {
     if (!walletAddress) return setNotice("Connect a wallet before joining a lobby.");
-    sendSocket({ type: "join_lobby", lobbyId, player: walletAddress });
-  }, [sendSocket, walletAddress]);
+    const lobby = lobbies.find((item) => item.lobbyId === lobbyId) || (activeLobby?.lobbyId === lobbyId ? activeLobby : null);
+    if (!lobby) return setNotice("Lobby details are still loading. Refresh lobbies and try again.");
+    if (lobby.players.some((item) => item.player === walletAddress)) return setNotice("You are already in this lobby.");
+
+    if (!ENABLE_ONCHAIN_ESCROW) {
+      sendSocket({ type: "join_lobby", lobbyId, player: walletAddress });
+      return;
+    }
+
+    const txSignature = await runApi("join_lobby_onchain", async () => {
+      await assertVaultFunding({ payer: walletAddress as Address, rpcUrl: rpcInfo?.rpcUrl });
+      const { instructions } = await buildJoinLobbyInstructions(lobby, walletAddress as Address);
+      const signature = await send({ instructions });
+      if (!signature) throw new Error("Wallet did not return a join deposit transaction signature.");
+      return signature;
+    });
+    if (!txSignature) return;
+
+    sendSocket({ type: "join_lobby", lobbyId, player: walletAddress, txSignature });
+  }, [activeLobby, lobbies, rpcInfo?.rpcUrl, runApi, send, sendSocket, walletAddress]);
+
+  const quickMatch = useCallback(async () => {
+    if (!walletAddress) return setNotice("Connect a wallet before matchmaking.");
+    const payload = arenaMatchPayload();
+    const openLobby = lobbies.find((lobby) => (
+      lobby.status === "waiting"
+      && lobby.privacy === "public"
+      && lobby.topic === payload.topic
+      && lobby.entryFeeLamports === String(payload.entryFeeLamports)
+      && lobby.players.length < lobby.maxPlayers
+      && !lobby.players.some((player) => player.player === walletAddress)
+    ));
+
+    if (openLobby) {
+      await joinLobby(openLobby.lobbyId);
+      return;
+    }
+
+    await createLobby();
+  }, [arenaMatchPayload, createLobby, joinLobby, lobbies, walletAddress]);
+
+  const cancelLobby = useCallback(async (lobbyId?: string) => {
+    if (!walletAddress) return setNotice("Connect your wallet before cancelling.");
+    const lobby = (lobbyId ? lobbies.find((item) => item.lobbyId === lobbyId) : activeLobby) || null;
+    if (!lobby) return setNotice("No lobby selected to cancel.");
+    if (lobby.host !== walletAddress) return setNotice("Only the lobby host can cancel this lobby.");
+    if (lobby.status !== "waiting") return setNotice("Only waiting lobbies can be cancelled and refunded.");
+
+    if (!ENABLE_ONCHAIN_ESCROW) {
+      sendSocket({ type: "cancel_lobby", lobbyId: lobby.lobbyId, player: walletAddress });
+      return;
+    }
+
+    const txSignature = await runApi("cancel_lobby_onchain", async () => {
+      const { instructions } = await buildCancelLobbyInstructions(lobby, walletAddress as Address);
+      const signature = await send({ instructions });
+      if (!signature) throw new Error("Wallet did not return a cancel/refund transaction signature.");
+      return signature;
+    });
+    if (!txSignature) return;
+
+    sendSocket({ type: "cancel_lobby", lobbyId: lobby.lobbyId, player: walletAddress, txSignature });
+  }, [activeLobby, lobbies, runApi, send, sendSocket, walletAddress]);
 
   const addDemoRival = useCallback(() => {
-    if (!activeLobby) return;
-    sendSocket({ type: "add_bot", lobbyId: activeLobby.lobbyId, name: "QuizBot" });
-  }, [activeLobby, sendSocket]);
+    setNotice("Demo rivals are disabled while on-chain escrow is active. Invite a second wallet to fund the match.");
+  }, []);
 
   const submitAnswer = useCallback((answerIdx: number) => {
     if (!walletAddress || !activeLobby || !activeQuestion) return;
@@ -253,6 +345,10 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
     if (!matchEnded) return setNotice("No signed match result to claim.");
     if (matchEnded.winner !== walletAddress) return setNotice("Only the winner wallet can claim this prize.");
 
+    if (!ENABLE_ONCHAIN_ESCROW) {
+      return setNotice("On-chain prize claiming is not enabled yet. Your win is saved and claimable after deployment.");
+    }
+
     const treasury = rpcInfo?.treasuryAddress || import.meta.env.VITE_TREASURY_ADDRESS;
     if (!treasury) {
       return setNotice("Treasury address is not configured. Set TREASURY_ADDRESS on the backend or VITE_TREASURY_ADDRESS in the frontend env.");
@@ -288,13 +384,13 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
       return;
     }
     if (data.type === "error") {
-      setNotice(data.message || "Realtime error.");
+      setNotice("Realtime action could not be completed.");
       return;
     }
-    if (["lobby_created", "joined", "matchmaking_joined", "lobby_update", "bot_added", "start_ack"].includes(data.type)) {
+    if (["lobby_created", "joined", "matchmaking_joined", "lobby_update", "lobby_cancelled", "cancelled", "bot_added", "start_ack"].includes(data.type)) {
       if (data.lobby) syncLobby(data.lobby);
       if (["lobby_created", "joined", "matchmaking_joined"].includes(data.type)) navigateRef.current("/game");
-      setNotice(data.type === "bot_added" ? "Demo rival joined. Match is starting." : "Lobby synced.");
+      setNotice(data.type === "lobby_cancelled" || data.type === "cancelled" ? "Lobby cancelled and escrow refunds submitted." : data.type === "bot_added" ? "Demo rival joined. Match is starting." : "Lobby synced.");
       return;
     }
     if (data.type === "match_started") {
@@ -359,9 +455,15 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
     socket.addEventListener("close", () => setSocketState("offline"));
     socket.addEventListener("error", () => {
       setSocketState("offline");
-      setNotice("Realtime socket error. Make sure the backend is running on port 4000.");
+      setNotice("Connection issue. Please try again shortly.");
     });
-    socket.addEventListener("message", (event) => handleServerMessage(JSON.parse(event.data) as ServerMessage));
+    socket.addEventListener("message", (event) => {
+      try {
+        handleServerMessage(JSON.parse(event.data) as ServerMessage);
+      } catch {
+        setNotice("Realtime update could not be read.");
+      }
+    });
     return () => socket.close();
   }, [handleServerMessage]);
 
@@ -401,6 +503,7 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
   useEffect(() => {
     if (!walletAddress) {
       setProfile(defaultProfile());
+      setHistory([]);
       setMatchEnded(null);
       setClaimTxSignature("");
       return;
@@ -412,6 +515,8 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
     void fetchProfile(walletAddress)
       .then(setProfile)
       .catch(() => setProfile(defaultProfile(walletAddress)));
+
+    void refreshHistory();
 
     const resumeRoute = session.route && session.route !== "/" ? session.route : "/dashboard";
     setRoute(resumeRoute);
@@ -472,6 +577,7 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
       quickMatch,
       joinLobby,
       addDemoRival,
+      cancelLobby,
       submitAnswer,
       recordClaim,
       claimPrizeOnchain,
@@ -482,6 +588,7 @@ export function ArenaProvider({ children, walletAddress }: ArenaProviderProps) {
       activeQuestion,
       addDemoRival,
       api,
+      cancelLobby,
       backendOnline,
       claimTxSignature,
       claimSubmitting,

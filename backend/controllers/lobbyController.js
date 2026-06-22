@@ -15,7 +15,8 @@ function createLobby(req, res) {
     const lobby = gameEngine.createLobby(req.body || {});
     return res.status(201).json({ lobby });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    console.error('Lobby create failed', err);
+    return res.status(400).json({ error: 'Lobby could not be created' });
   }
 }
 
@@ -24,7 +25,8 @@ function findMatch(req, res) {
     const lobby = gameEngine.findOrCreateMatchmakingLobby(req.body || {});
     return res.json({ lobby });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    console.error('Matchmaking failed', err);
+    return res.status(400).json({ error: 'Matchmaking could not be completed' });
   }
 }
 
@@ -33,7 +35,8 @@ async function startLobby(req, res) {
     const lobby = await gameEngine.startMatch(req.params.lobbyId);
     return res.json({ lobby });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    console.error('Lobby start failed', err);
+    return res.status(400).json({ error: 'Lobby could not be started' });
   }
 }
 

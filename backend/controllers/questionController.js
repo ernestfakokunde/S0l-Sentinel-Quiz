@@ -21,7 +21,8 @@ async function seedQuestions(_req, res) {
     const questions = await seedDefaultQuestions();
     return res.status(201).json({ count: questions.length, questions });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('Question seed failed', err);
+    return res.status(500).json({ error: 'Questions could not be saved' });
   }
 }
 
